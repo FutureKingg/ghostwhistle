@@ -1,0 +1,28 @@
+:root {
+  color: #e9edf5;
+  background: #0b1020;
+  font-family: system-ui, sans-serif;
+}
+
+main {
+  max-width: 760px;
+  margin: 48px auto;
+  padding: 24px;
+}
+
+li {
+  margin: 24px 0;
+}
+
+button,
+input {
+  margin: 8px;
+  padding: 10px 14px;
+}
+
+pre {
+  white-space: pre-wrap;
+  border: 1px solid #33405e;
+  border-radius: 8px;
+  padding: 16px;
+}

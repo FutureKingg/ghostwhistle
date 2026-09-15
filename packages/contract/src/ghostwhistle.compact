@@ -1,0 +1,138 @@
+// GhostWhistle eligibility and report-integrity registry.
+// SPDX-License-Identifier: Apache-2.0
+
+pragma language_version 0.23;
+
+import CompactStandardLibrary;
+
+// Only commitments are written to the public ledger. Email addresses, report
+// bodies, attachments, credential secrets, and report salts remain private.
+
+export sealed ledger credentialIssuerKey: Bytes<32>;
+export sealed ledger destinationOracleKey: Bytes<32>;
+export ledger credentialCommitments: Set<Bytes<32>>;
+export ledger revokedCredentialCommitments: Set<Bytes<32>>;
+export ledger approvedSecurityDestinations: Set<Bytes<32>>;
+export ledger usedNullifiers: Set<Bytes<32>>;
+export ledger acceptedTickets: Set<Bytes<32>>;
+export ledger acceptedCount: Counter;
+
+constructor(_credentialIssuerSecret: Bytes<32>, _destinationOracleSecret: Bytes<32>) {
+  credentialIssuerKey = disclose(deriveRoleKey(pad(32, "ghostwhistle:issuer:"), _credentialIssuerSecret));
+  destinationOracleKey = disclose(deriveRoleKey(pad(32, "ghostwhistle:oracle:"), _destinationOracleSecret));
+}
+
+// The issuer receives only a user-generated commitment after an off-chain
+// eligibility check. It never receives the secret used to open that commitment.
+export circuit issueCredential(credentialCommitment: Bytes<32>, _issuerSecret: Bytes<32>): [] {
+  assert(
+    credentialIssuerKey == deriveRoleKey(pad(32, "ghostwhistle:issuer:"), _issuerSecret),
+    "Only the credential issuer may add a commitment"
+  );
+  const publicCommitment = disclose(credentialCommitment);
+  assert(!credentialCommitments.member(publicCommitment), "Credential commitment already exists");
+  credentialCommitments.insert(publicCommitment);
+}
+
+export circuit revokeCredential(credentialCommitment: Bytes<32>, _issuerSecret: Bytes<32>): [] {
+  assert(
+    credentialIssuerKey == deriveRoleKey(pad(32, "ghostwhistle:issuer:"), _issuerSecret),
+    "Only the credential issuer may revoke a commitment"
+  );
+  const publicCommitment = disclose(credentialCommitment);
+  assert(credentialCommitments.member(publicCommitment), "Credential commitment does not exist");
+  assert(!revokedCredentialCommitments.member(publicCommitment), "Credential commitment is already revoked");
+  revokedCredentialCommitments.insert(publicCommitment);
+}
+
+export circuit approveSecurityDestination(destinationEmailHash: Bytes<32>, _oracleSecret: Bytes<32>): [] {
+  assert(
+    destinationOracleKey == deriveRoleKey(pad(32, "ghostwhistle:oracle:"), _oracleSecret),
+    "Only the destination oracle may update the registry"
+  );
+  const publicDestination = disclose(destinationEmailHash);
+  assert(!approvedSecurityDestinations.member(publicDestination), "Destination is already approved");
+  approvedSecurityDestinations.insert(publicDestination);
+}
+
+// Proves knowledge of an issued organization credential and enforces that its
+// hidden domain equals the disclosed destination domain. The report itself is
+// represented only by a salted commitment.
+export circuit submitInternal(
+  destinationDomainHash: Bytes<32>,
+  destinationEmailHash: Bytes<32>,
+  reportCommitment: Bytes<32>,
+  credentialDomainHash: Bytes<32>,
+  credentialSecret: Bytes<32>,
+  reportSalt: Bytes<32>
+): Vector<2, Bytes<32>> {
+  const credential = deriveCredential(credentialDomainHash, credentialSecret);
+  assert(credentialCommitments.member(credential), "No issued credential opens to this secret");
+  assert(!revokedCredentialCommitments.member(credential), "Credential commitment is revoked");
+  assert(credentialDomainHash == destinationDomainHash, "Credential and destination domains differ");
+
+  const publicDestinationEmail = disclose(destinationEmailHash);
+  const publicReport = disclose(reportCommitment);
+  const nullifier = deriveInternalNullifier(credentialSecret, publicReport, reportSalt);
+  assert(!usedNullifiers.member(nullifier), "This report proof was already used");
+
+  // Bind both public routing claims into the receipt. A relay can therefore
+  // reject a ticket minted with a valid employee domain but an unrelated
+  // destination-email hash.
+  const internalDestination = deriveInternalDestination(
+    disclose(destinationDomainHash),
+    publicDestinationEmail
+  );
+  const ticket = deriveTicket(pad(32, "ghostwhistle:internal:"), internalDestination, publicReport, nullifier);
+  usedNullifiers.insert(nullifier);
+  acceptedTickets.insert(ticket);
+  acceptedCount.increment(1);
+  return [ticket, nullifier];
+}
+
+// White-hat submissions do not claim employment. They prove only that the
+// destination was approved by the security.txt oracle and bind the report hash.
+export circuit submitWhitehat(
+  destinationEmailHash: Bytes<32>,
+  reportCommitment: Bytes<32>,
+  reportSalt: Bytes<32>
+): Vector<2, Bytes<32>> {
+  const publicDestination = disclose(destinationEmailHash);
+  assert(approvedSecurityDestinations.member(publicDestination), "Destination is not in the security.txt registry");
+
+  const publicReport = disclose(reportCommitment);
+  const nullifier = deriveWhitehatNullifier(publicReport, reportSalt);
+  assert(!usedNullifiers.member(nullifier), "This report proof was already used");
+
+  const ticket = deriveTicket(pad(32, "ghostwhistle:whitehat:"), publicDestination, publicReport, nullifier);
+  usedNullifiers.insert(nullifier);
+  acceptedTickets.insert(ticket);
+  acceptedCount.increment(1);
+  return [ticket, nullifier];
+}
+
+export pure circuit deriveRoleKey(role: Bytes<32>, secret: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([role, secret]);
+}
+
+export pure circuit deriveCredential(domainHash: Bytes<32>, secret: Bytes<32>): Bytes<32> {
+  return persistentCommit<Bytes<32>>(domainHash, secret);
+}
+
+export pure circuit deriveInternalNullifier(secret: Bytes<32>, report: Bytes<32>, salt: Bytes<32>): Bytes<32> {
+  return persistentCommit<Vector<2, Bytes<32>>>([secret, report], salt);
+}
+
+export pure circuit deriveWhitehatNullifier(report: Bytes<32>, salt: Bytes<32>): Bytes<32> {
+  return persistentCommit<Bytes<32>>(report, salt);
+}
+
+export pure circuit deriveInternalDestination(domain: Bytes<32>, email: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([domain, email]);
+}
+
+// Exported so the delivery adapter can independently verify that a returned
+// ticket binds the public mode, destination, report commitment, and nullifier.
+export pure circuit deriveTicket(kind: Bytes<32>, destination: Bytes<32>, report: Bytes<32>, nullifier: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>([kind, destination, report, nullifier]);
+}

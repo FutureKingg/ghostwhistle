@@ -1,0 +1,33 @@
+{
+  "name": "@ghostwhistle/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build && node scripts/copy-zk-assets.mjs",
+    "preview": "vite preview",
+    "test": "vitest run src",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@ghostwhistle/core": "file:../../packages/core",
+    "@ghostwhistle/midnight": "file:../../packages/midnight",
+    "@vitejs/plugin-react": "^5.1.1",
+    "buffer": "^6.0.3",
+    "lucide-react": "^0.544.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "vite": "^7.1.5"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.8.0",
+    "@testing-library/react": "^16.3.0",
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.9.2",
+    "vite-plugin-wasm": "^3.6.0",
+    "vitest": "^4.1.11"
+  }
+}

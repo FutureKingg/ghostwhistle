@@ -1,0 +1,19 @@
+{
+  "name": "@ghostwhistle/midnight-admin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5174 --strictPort",
+    "build": "tsc -p tsconfig.json && vite build && node scripts/copy-zk-assets.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@ghostwhistle/midnight": "file:../../packages/midnight",
+    "vite": "^7.3.6"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vite-plugin-wasm": "^3.6.0"
+  }
+}

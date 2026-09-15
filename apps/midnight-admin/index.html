@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GhostWhistle · Midnight deployment console</title>
+  </head>
+  <body>
+    <main>
+      <h1>GhostWhistle Preprod deployment</h1>
+      <p>This local-only console connects to Lace. It never stores an unencrypted administrator key.</p>
+
+      <ol>
+        <li><button id="connect">Connect Lace on Preprod</button></li>
+        <li>
+          <label>
+            Backup passphrase
+            <input id="passphrase" type="password" minlength="12" autocomplete="new-password" />
+          </label>
+          <button id="prepare" disabled>Generate keys and download encrypted backup</button>
+        </li>
+        <li>
+          <label>
+            <input id="backup-confirmed" type="checkbox" disabled />
+            I saved the encrypted backup and its passphrase separately.
+          </label>
+        </li>
+        <li><button id="deploy" disabled>Deploy GhostWhistle contract</button></li>
+      </ol>
+
+      <pre id="status">Proof server expected at http://127.0.0.1:6300</pre>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
