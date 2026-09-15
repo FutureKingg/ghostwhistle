@@ -2,6 +2,8 @@
 
 **Prove eligibility, not identity.** GhostWhistle is a privacy-preserving whistleblowing and coordinated vulnerability disclosure protocol built for Midnight.
 
+**Reviewer demo:** [ghostwhistle.vercel.app](https://ghostwhistle.vercel.app) — keyless interactive demo; no real email or on-chain transaction is sent.
+
 An eligible reporter can prove that they hold an organization credential, bind a report to an approved destination, and create a tamper-evident ticket without publishing their email address, credential secret, report body, or attachments on-chain.
 
 > Project status: the functional core, Compact contract, deterministic demo, live Midnight.js/Lace provider boundary, end-to-end OTP issuance flow, `security.txt` parser, moderation boundary, anti-replay logic, and email adapters are implemented. A real Preview/Preprod deployment is reported only after its address and transaction identifiers are captured; the UI never presents simulator output as a live proof.

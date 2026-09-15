@@ -73,3 +73,5 @@ managed/
 
 # Local Midnight CLI wallet vault (encrypted; never commit)
 apps/midnight-cli/.local/
+
+.vercel
