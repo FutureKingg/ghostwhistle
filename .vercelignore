@@ -1,0 +1,11 @@
+.git/
+.env
+.env.*
+!.env.example
+.tmp-sdk/
+.tmp-sdk-canary/
+node_modules/
+**/dist/
+apps/midnight-cli/.local/
+*.log
+coverage/
