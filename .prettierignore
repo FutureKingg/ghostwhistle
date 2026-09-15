@@ -3,5 +3,6 @@ dist
 managed
 .tmp-sdk
 .tmp-sdk-canary
+.vercelignore
 package-lock.json
 LICENSE
