@@ -70,8 +70,16 @@ managed/
 
 .claude
 .midnight-expert
+.codex/
+.hallmark/
+
+# Local deployment metadata
+.vercel/
 
 # Local Midnight CLI wallet vault (encrypted; never commit)
 apps/midnight-cli/.local/
 
 .vercel
+
+# Locally rendered demo video and HyperFrames review artifacts
+brag-output/

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Receipt, RelayAttachment, ReportDraft } from '@ghostwhistle/core';
-import { deliverVerifiedReport } from './issuer-api';
+import { deliverVerifiedReport, listPublicDestinations } from './issuer-api';
 
 const receipt: Receipt = {
   mode: 'internal',
@@ -67,5 +67,35 @@ describe('issuer API client', () => {
     await expect(deliverVerifiedReport(receipt, draft)).rejects.toThrow(
       '로컬 issuer API에 연결할 수 없습니다',
     );
+  });
+
+  it('loads the operator-curated public destination directory', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            destinations: [
+              {
+                id: 'demo-journalist',
+                category: 'journalist',
+                organization: 'Demo Desk',
+                label: 'Tips',
+                email: 'tips@news.example',
+                description: 'Verified test destination.',
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+
+    await expect(listPublicDestinations()).resolves.toMatchObject([
+      { id: 'demo-journalist', email: 'tips@news.example' },
+    ]);
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://127.0.0.1:8787/api/public/destinations');
+    expect(init.method).toBe('GET');
   });
 });

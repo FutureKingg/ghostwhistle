@@ -161,6 +161,69 @@ describe('issuer API', () => {
     expect(approved).toEqual(['security@acme.co.kr']);
   });
 
+  it('lists and qualifies only operator-configured public destinations', async () => {
+    const approved: string[] = [];
+    const server = await startIssuerServer({
+      port: 0,
+      allowedOrigin: 'http://127.0.0.1:4173',
+      delivery: { async send() {} },
+      registry: { async issueCredential() {}, async revokeCredential() {} },
+      whitehat: {
+        resolver: {
+          async resolve() {
+            throw new Error('not used');
+          },
+        },
+        registry: {
+          async approveSecurityDestination(email) {
+            approved.push(email);
+          },
+        },
+        publicDestinations: [
+          {
+            id: 'demo-broadcaster',
+            category: 'broadcaster',
+            organization: 'Demo Newsroom',
+            label: 'Tips desk',
+            email: 'tips@news.example',
+            description: 'A verified test destination.',
+          },
+        ],
+      },
+    });
+    running.push(server);
+    const port = (server.address() as AddressInfo).port;
+
+    const directory = await get(port, '/api/public/destinations');
+    expect(directory.response.status).toBe(200);
+    expect(directory.body).toEqual({
+      destinations: [
+        {
+          id: 'demo-broadcaster',
+          category: 'broadcaster',
+          organization: 'Demo Newsroom',
+          label: 'Tips desk',
+          email: 'tips@news.example',
+          description: 'A verified test destination.',
+        },
+      ],
+    });
+
+    const qualified = await post(port, '/api/public/qualify', { destinationId: 'demo-broadcaster' });
+    expect(qualified.response.status).toBe(200);
+    expect(qualified.body).toMatchObject({
+      mode: 'whitehat',
+      channel: 'public-directory',
+      destinationId: 'demo-broadcaster',
+      destinationEmail: 'tips@news.example',
+    });
+    expect(approved).toEqual(['tips@news.example']);
+
+    const rejected = await post(port, '/api/public/qualify', { destinationId: 'tips@news.example' });
+    expect(rejected.response.status).toBe(400);
+    expect(approved).toEqual(['tips@news.example']);
+  });
+
   it('validates and forwards a verified report relay payload', async () => {
     const delivered: Array<{ ticket: string; to: string }> = [];
     const server = await startIssuerServer({
@@ -345,6 +408,13 @@ async function post(port: number, path: string, body: unknown) {
       'content-type': 'application/json',
     },
     body: JSON.stringify(body),
+  });
+  return { response, body: (await response.json()) as unknown };
+}
+
+async function get(port: number, path: string) {
+  const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+    headers: { origin: 'http://127.0.0.1:4173' },
   });
   return { response, body: (await response.json()) as unknown };
 }

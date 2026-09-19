@@ -29,7 +29,7 @@ The system avoids giving any one application component both the reporter's sourc
 
 ## Attacks addressed
 
-- arbitrary recipient spam: destination is derived from the credential domain or verified `security.txt`;
+- arbitrary recipient spam: destination is derived from the credential domain, verified `security.txt`, or an operator-curated public directory;
 - replay: the contract rejects an already-consumed nullifier;
 - report tampering: recipient-visible text is bound to a salted commitment;
 - credential guessing: commitments require a random 32-byte browser secret;
@@ -53,9 +53,12 @@ The system avoids giving any one application component both the reporter's sourc
 ## Deployment requirements
 
 1. Disable body logging and redact authorization headers.
-2. Put OTP and rate-limit state in a shared TTL store.
-3. Resolve and reject private, loopback, link-local, and reserved IP ranges, then pin the validated address into the HTTPS connection to prevent DNS rebinding.
-4. Revalidate destination locks in the relay, never only in the browser.
-5. Use separate credential-issuer and destination-oracle secrets.
-6. Pin the Compact compiler, Midnight JS, proof-server, and ledger versions.
-7. Label simulated and live proof paths visibly and separately.
+2. Do not load third-party fonts, analytics, pixels, or client-identifying widgets on the reporter interface.
+3. Put OTP and rate-limit state in a shared TTL store.
+4. Resolve and reject private, loopback, link-local, and reserved IP ranges, then pin the validated address into the HTTPS connection to prevent DNS rebinding.
+5. Revalidate destination locks in the relay, never only in the browser.
+6. Use separate credential-issuer and destination-oracle secrets.
+7. Pin the Compact compiler, Midnight JS, proof-server, and ledger versions.
+8. Label simulated and live proof paths visibly and separately.
+
+For a high-risk whistleblowing deployment, place the source interface behind a Tor onion service and follow an operational threat model comparable to SecureDrop or GlobaLeaks. That is a separate infrastructure project; Midnight commitments cannot hide the source IP from a normal web server or a monitored corporate network.

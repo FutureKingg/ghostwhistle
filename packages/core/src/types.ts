@@ -1,3 +1,5 @@
+import type { PublicDestinationCategory } from './public-destinations.js';
+
 export type DisclosureMode = 'internal' | 'whitehat';
 
 export type ReportAttachment = {
@@ -40,7 +42,11 @@ export type WhitehatQualification = {
   mode: 'whitehat';
   domain: string;
   destinationEmail: string;
-  securityTxtUrl: string;
+  securityTxtUrl?: string;
+  channel?: 'security-txt' | 'public-directory';
+  destinationId?: string;
+  destinationCategory?: PublicDestinationCategory;
+  destinationLabel?: string;
 };
 
 export type Qualification = InternalQualification | WhitehatQualification;

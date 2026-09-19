@@ -6,6 +6,7 @@ export * from './moderation.js';
 export * from './otp.js';
 export * from './ports.js';
 export * from './pow.js';
+export * from './public-destinations.js';
 export * from './rate-limit.js';
 export * from './security-txt.js';
 export * from './types.js';

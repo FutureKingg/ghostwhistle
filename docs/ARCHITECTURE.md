@@ -18,6 +18,7 @@ Pure TypeScript domain and application code:
 - `validation.ts` — canonical email, domain, and report validation;
 - `otp.ts` — expiring and attempt-limited OTP challenges;
 - `security-txt.ts` — RFC 9116 Contact parsing and same-domain selection;
+- `public-destinations.ts` — strict normalization of operator-curated broadcaster, regulator, and journalist destinations;
 - `moderation.ts` — conservative offline fallback implementing `ModerationPort`;
 - `pow.ts` — client puzzle generation and verification;
 - `rate-limit.ts` — storage-agnostic window semantics for local mode;
@@ -40,7 +41,7 @@ The contract also exports pure `deriveTicket`. A live delivery verifier must rec
 Server-only vendor implementations:
 
 - `ResendGateway` implements both OTP and report delivery;
-- `GeminiModerationAdapter` requests schema-constrained JSON and validates it;
+- `ModerationPort` is replaceable; the current external provider is `GeminiModerationAdapter`, which requests schema-constrained JSON and validates it, with the local conservative adapter as fallback;
 - email rendering escapes every reporter-controlled field;
 - upstream errors are bounded and do not expose credentials in request bodies.
 
@@ -85,6 +86,18 @@ Resolver fetches /.well-known/security.txt
 ```
 
 `createWhitehatQualification` performs no registry mutation. `approveWhitehatDestination` is the privileged oracle operation; only `qualifyWhitehatForDemo` combines them for the local walkthrough. This prevents a browser-facing API from accidentally inheriting the oracle capability.
+
+The public-interest directory uses the same `submitWhitehat` circuit but a different trusted qualification path:
+
+```text
+Operator verifies a public recipient out of band and registers its id + email
+  → browser requests only the registered id
+  → issuer resolves the id and approves the exact email commitment
+  → browser submits a white-hat report to that locked destination
+  → relay recomputes the destination commitment before delivery
+```
+
+The directory is deliberately not an open email form. Adding a real broadcaster, regulator, or journalist requires an operator to verify the address and configure it server-side.
 
 ## Production storage decisions
 

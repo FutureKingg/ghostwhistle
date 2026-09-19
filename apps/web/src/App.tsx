@@ -1,22 +1,13 @@
 import {
-  ArrowRight,
-  BadgeCheck,
   Check,
-  ChevronRight,
   CircleCheck,
   Clock3,
-  Copy,
-  EyeOff,
   FileCheck2,
-  Fingerprint,
-  Inbox,
   KeyRound,
-  Link2,
   LockKeyhole,
   Mail,
   Network,
   Paperclip,
-  Radar,
   RefreshCw,
   Send,
   ShieldAlert,
@@ -34,6 +25,7 @@ import {
   shortHash,
   solvePow,
   type InternalEnrollment,
+  type PublicDestination,
   type PublicOtpChallenge,
   type Qualification,
   type RelayAttachment,
@@ -49,7 +41,13 @@ import {
   type LiveReportReceipt,
   submitLiveReport,
 } from './lib/midnight';
-import { qualifyWhitehat, requestInternalOtp, verifyInternalOtp } from './lib/issuer-api';
+import {
+  listPublicDestinations,
+  qualifyPublicDestination,
+  qualifyWhitehat,
+  requestInternalOtp,
+  verifyInternalOtp,
+} from './lib/issuer-api';
 import {
   evidenceAccept,
   formatEvidenceSize,
@@ -57,10 +55,26 @@ import {
   validateEvidenceSelection,
 } from './lib/evidence';
 import { clearPublicReceipt, loadPublicReceipt, savePublicReceipt } from './lib/receipt-storage';
+import {
+  defaultDrafts,
+  loadLanguage,
+  moderationCategoryLabels,
+  pick,
+  proofPhases,
+  reportSteps,
+  saveLanguage,
+  type Language,
+} from './i18n';
+import { AuditInbox, BrandMark, CopyButton, PrivacyBoundary, StepRail } from './components/report-ui';
+import { AppHeader, WalletGate } from './components/app-chrome';
+import { HomeHero, MidnightExplainer } from './components/landing';
 import type { AppStep, DisclosureMode, ProofReceipt, ReportDraft } from './types';
+import { demoPublicDestinations } from './public-destinations';
 
 const sleep = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 const whitehatExampleDomain = 'tailscale.com';
+
+const initialLanguage = loadLanguage();
 
 const emptyReceipt: ProofReceipt | null = null;
 const restoredReceipt = loadPublicReceipt();
@@ -70,217 +84,33 @@ type ModerationToast = {
   message: string;
 };
 
-const moderationCategoryLabel: Record<string, string> = {
-  abuse: '악성 비방·욕설',
-  spam: '스팸·도배',
-  'active-threat': '테러·협박성 메시지',
-  unclear: '악성 메시지',
-  report: '정책 위반 메시지',
+type WhitehatChannel = 'security' | 'public';
+
+const publicDestinationCategoryLabels: Record<Language, Record<PublicDestination['category'], string>> = {
+  ko: { broadcaster: '방송사', regulator: '감독기관', journalist: '기자·공익매체' },
+  en: {
+    broadcaster: 'Broadcaster',
+    regulator: 'Regulator',
+    journalist: 'Journalist / public-interest media',
+  },
 };
-
-const defaultDraft: ReportDraft = {
-  department: '재무운영팀',
-  title: '2026년 2분기 외부 계좌 분할 이체 정황',
-  summary: '승인되지 않은 외부 계좌로 반복적인 분할 이체가 발생한 정황을 제보합니다.',
-  details:
-    '지난 6월부터 동일 거래처 코드 아래 서로 다른 수취 계좌가 등록되었습니다. 내부 승인 문서의 계좌와 실제 송금 계좌가 일치하지 않으며, 첨부 증빙의 전표 번호를 기준으로 독립 감사를 요청합니다.',
-};
-
-const proofPhases = [
-  '브라우저에서 리포트 커밋 생성',
-  '자격 증명 membership 검증',
-  '도메인 락 constraint 확인',
-  'Midnight ticket 트랜잭션 구성',
-];
-
-const stepOrder: AppStep[] = ['qualify', 'compose', 'prove', 'receipt'];
-
-function BrandMark() {
-  return (
-    <div className="brand-mark" aria-hidden="true">
-      <span className="brand-arc brand-arc-one" />
-      <span className="brand-arc brand-arc-two" />
-      <span className="brand-dot" />
-    </div>
-  );
-}
-
-function WalletMark({ state }: { state: LiveConnectionState }) {
-  return (
-    <span className={`wallet-mark ${state}`} aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none">
-        <path d="M6.5 8.25V7.5A2.5 2.5 0 0 1 9 5h7.25" />
-        <path d="M6.5 8.25h10.75A2.25 2.25 0 0 1 19.5 10.5v6A2.5 2.5 0 0 1 17 19H7a2.5 2.5 0 0 1-2.5-2.5V10.25a2 2 0 0 1 2-2Z" />
-        <path d="M15.5 12.25h4v3.5h-4a1.75 1.75 0 1 1 0-3.5Z" />
-        <circle cx="15.75" cy="14" r="0.75" />
-      </svg>
-    </span>
-  );
-}
-
-function CopyButton({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-
-  async function copy() {
-    await navigator.clipboard.writeText(value);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1200);
-  }
-
-  return (
-    <button className="icon-button" onClick={copy} aria-label="값 복사" title="복사">
-      {copied ? <Check size={14} /> : <Copy size={14} />}
-    </button>
-  );
-}
-
-function StepRail({ step }: { step: AppStep }) {
-  const activeIndex = stepOrder.indexOf(step);
-  const labels = ['정보 확인', '내용 작성', '안전하게 전송', '접수 완료'];
-
-  return (
-    <ol className="step-rail" aria-label="제보 진행 단계">
-      {labels.map((label, index) => {
-        const state = index < activeIndex ? 'complete' : index === activeIndex ? 'active' : 'future';
-        return (
-          <li className={`step-item ${state}`} key={label}>
-            <span className="step-index">{state === 'complete' ? <Check size={13} /> : index + 1}</span>
-            <span>{label}</span>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
-function PrivacyBoundary({ mode }: { mode: DisclosureMode }) {
-  return (
-    <div className="boundary-card">
-      <div className="boundary-heading">
-        <EyeOff size={17} />
-        <div>
-          <strong>개인정보 보호 안내</strong>
-          <span>제보자 정보는 공개되지 않습니다</span>
-        </div>
-      </div>
-      <div className="boundary-grid">
-        <div>
-          <span className="boundary-label private">보호되는 정보</span>
-          <p>{mode === 'internal' ? '이메일 주소' : '제보자 신원'}</p>
-          <p>제보 내용 · 첨부 파일</p>
-        </div>
-        <div>
-          <span className="boundary-label public">확인되는 정보</span>
-          <p>공식 접수처</p>
-          <p>전달 확인 정보</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AuditInbox({
-  receipt,
-  draft,
-  destination,
-  live,
-  demoMode,
-}: {
-  receipt: ProofReceipt | null;
-  draft: ReportDraft;
-  destination: string;
-  live: boolean;
-  demoMode: boolean;
-}) {
-  return (
-    <aside className="inbox-panel">
-      <div className="inbox-chrome">
-        <div className="window-dots" aria-hidden="true">
-          <i />
-          <i />
-          <i />
-        </div>
-        <span>
-          <Inbox size={14} /> {demoMode ? '수신 화면 예시' : '공식 접수처'}
-        </span>
-        <span className="inbox-address">{destination || 'audit@company.com'}</span>
-      </div>
-
-      {!receipt ? (
-        <div className="inbox-empty">
-          <div className="radar-wrap">
-            <Radar size={34} />
-            <span />
-          </div>
-          <p>{demoMode ? '제출 후 수신 예시를 확인할 수 있습니다' : '제보가 도착하면 여기에 표시됩니다'}</p>
-          <span>
-            {demoMode
-              ? '데모에서는 실제 이메일이나 온체인 거래가 발생하지 않습니다.'
-              : '제출이 완료되면 공식 접수처로 안전하게 전달됩니다.'}
-          </span>
-        </div>
-      ) : live ? (
-        <div className="inbox-empty live-inbox-result">
-          <div className="success-mark small-success">
-            <Check size={22} />
-          </div>
-          <p>
-            {receipt.delivery === 'email'
-              ? '제보 전달이 완료됐습니다'
-              : receipt.delivery === 'verified-local'
-                ? '제보 확인과 전달이 완료됐습니다'
-                : '제보 확인이 완료됐습니다'}
-          </p>
-          <span>
-            {receipt.delivery === 'email'
-              ? `${destination} 공식 접수처로 제보를 전달했습니다.`
-              : receipt.delivery === 'verified-local'
-                ? '공식 접수처와 내용을 확인했습니다.'
-                : `전달은 실패했지만 접수 확인 정보는 안전합니다. ${receipt.deliveryError ?? ''}`}
-          </span>
-          <code>{shortHash(receipt.ticket, 14, 10)}</code>
-        </div>
-      ) : (
-        <div className="mail-preview">
-          <div className="mail-header">
-            <span className="verified-pill">
-              <BadgeCheck size={14} /> 검증 완료
-            </span>
-            <span className="mail-time">방금 전</span>
-            <h2>{draft.title}</h2>
-            <p>GhostWhistle 안전 전달</p>
-          </div>
-          <div className="mail-proof-note">
-            <ShieldCheck size={18} />
-            <div>
-              <strong>제보 내용은 확인됐고, 신원은 전달되지 않았습니다.</strong>
-              <span>접수 확인 코드 {shortHash(receipt.ticket)} · 공식 접수처 확인 완료</span>
-            </div>
-          </div>
-          <div className="mail-body">
-            <label>발생 부서</label>
-            <p>{draft.department || '미기재'}</p>
-            <label>제보 요약</label>
-            <p>{draft.summary}</p>
-            <label>상세 내용</label>
-            <p>{draft.details}</p>
-          </div>
-          <div className="mail-footer">
-            <Link2 size={14} /> 전달된 내용이 바뀌지 않았는지 확인할 수 있습니다.
-          </div>
-        </div>
-      )}
-    </aside>
-  );
-}
 
 export default function App() {
+  const [language, setLanguage] = useState<Language>(initialLanguage);
+  const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
+  const [walletGateOpen, setWalletGateOpen] = useState(false);
   const [showReport, setShowReport] = useState(Boolean(restoredReceipt));
   const [mode, setMode] = useState<DisclosureMode>('internal');
   const [step, setStep] = useState<AppStep>(restoredReceipt ? 'receipt' : 'qualify');
   const [identityInput, setIdentityInput] = useState('hana@acme.co.kr');
+  const [whitehatChannel, setWhitehatChannel] = useState<WhitehatChannel>('security');
+  const [publicDestinationId, setPublicDestinationId] = useState(demoPublicDestinations[0]?.id ?? '');
+  const [publicDestinations, setPublicDestinations] = useState<PublicDestination[]>(
+    network.demoMode ? demoPublicDestinations : [],
+  );
+  const [publicDestinationsLoading, setPublicDestinationsLoading] = useState(false);
   const [destination, setDestination] = useState('');
-  const [draft, setDraft] = useState<ReportDraft>(defaultDraft);
+  const [draft, setDraft] = useState<ReportDraft>(defaultDrafts[initialLanguage].internal);
   const [receipt, setReceipt] = useState<ProofReceipt | null>(restoredReceipt ?? emptyReceipt);
   const [proofPhase, setProofPhase] = useState(-1);
   const [error, setError] = useState('');
@@ -303,8 +133,88 @@ export default function App() {
     return () => window.clearTimeout(timeout);
   }, [moderationToast]);
 
+  useEffect(() => {
+    document.documentElement.lang = language;
+    saveLanguage(language);
+  }, [language]);
+
+  useEffect(() => {
+    if (!showReport || mode !== 'whitehat' || whitehatChannel !== 'public' || network.demoMode) return;
+    let cancelled = false;
+    setPublicDestinationsLoading(true);
+    void listPublicDestinations()
+      .then((destinations) => {
+        if (cancelled) return;
+        setPublicDestinations(destinations);
+        setPublicDestinationId((current) =>
+          destinations.some((destination) => destination.id === current)
+            ? current
+            : (destinations[0]?.id ?? ''),
+        );
+        if (destinations.length === 0) {
+          setError(
+            pick(
+              language,
+              '현재 연결된 공식 공익 접수처가 없습니다. 운영자가 검증한 접수처를 먼저 등록해야 합니다.',
+              'No verified public-interest destination is configured yet. An operator must register one first.',
+            ),
+          );
+        }
+      })
+      .catch((loadError) => {
+        if (!cancelled) {
+          setError(
+            loadError instanceof Error
+              ? loadError.message
+              : pick(
+                  language,
+                  '공식 접수처 목록을 불러오지 못했습니다.',
+                  'Could not load the public destination directory.',
+                ),
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPublicDestinationsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [language, mode, showReport, whitehatChannel]);
+
+  useEffect(() => {
+    if (!languageMenuOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setLanguageMenuOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [languageMenuOpen]);
+
+  useEffect(() => {
+    if (!walletGateOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && liveConnection !== 'connecting') setWalletGateOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [liveConnection, walletGateOpen]);
+
   const domain = useMemo(() => {
     if (mode === 'internal') return identityInput.trim().split('@')[1]?.toLowerCase() ?? '';
+    if (whitehatChannel === 'public') {
+      return (
+        publicDestinations
+          .find((candidate) => candidate.id === publicDestinationId)
+          ?.email.split('@')[1]
+          ?.toLowerCase() ?? ''
+      );
+    }
     return identityInput
       .trim()
       .toLowerCase()
@@ -323,41 +233,94 @@ export default function App() {
     setOtpChallenge(null);
     setOtpCode('');
     setLiveQualification(null);
+    setWhitehatChannel('security');
+    setPublicDestinationId(demoPublicDestinations[0]?.id ?? '');
+    setPublicDestinations(network.demoMode ? demoPublicDestinations : []);
     setEvidenceFiles([]);
     setLiveDeliveryReceipt(null);
     setIdentityInput(nextMode === 'internal' ? 'hana@acme.co.kr' : whitehatExampleDomain);
-    setDraft(
-      nextMode === 'internal'
-        ? defaultDraft
-        : {
-            department: 'Web application / API',
-            title: 'Broken access control in invoice export endpoint',
-            summary:
-              'A low-privilege account can enumerate invoice exports belonging to other organizations.',
-            details:
-              'The numeric export identifier is accepted without an organization ownership check. I reproduced the issue only against my own test tenants. Suggested fix: authorize export ownership before object retrieval.',
-          },
-    );
+    setDraft(defaultDrafts[language][nextMode]);
+  }
+
+  function changeLanguage(nextLanguage: Language) {
+    if (nextLanguage === language) {
+      setLanguageMenuOpen(false);
+      return;
+    }
+    if (step === 'qualify') setDraft(defaultDrafts[nextLanguage][mode]);
+    setLanguage(nextLanguage);
+    setLanguageMenuOpen(false);
   }
 
   function openReport() {
+    setWalletGateOpen(false);
     setShowReport(true);
     window.setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 0);
   }
 
+  function requestReportAccess() {
+    setError('');
+    if (!network.demoMode && network.contractAddress && liveConnection !== 'connected') {
+      setWalletGateOpen(true);
+      return;
+    }
+    openReport();
+  }
+
+  async function connectFromWalletGate() {
+    if (await connectDeployment()) openReport();
+  }
+
   function openHome() {
+    setWalletGateOpen(false);
     setShowReport(false);
     window.setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 0);
   }
 
   async function qualify() {
     setError('');
+    if (mode === 'whitehat' && whitehatChannel === 'public') {
+      const selected = publicDestinations.find((candidate) => candidate.id === publicDestinationId);
+      if (!selected) {
+        setError(
+          pick(
+            language,
+            '먼저 검증된 공식 접수처를 선택해 주세요.',
+            'Choose a verified public destination first.',
+          ),
+        );
+        return;
+      }
+      if (!network.demoMode) {
+        setQualifying(true);
+        try {
+          if (liveConnection !== 'connected' && !(await connectDeployment())) return;
+          const qualification = await qualifyPublicDestination(selected.id);
+          setLiveQualification(qualification);
+          setDestination(qualification.destinationEmail);
+          setStep('compose');
+        } catch (qualificationError) {
+          setError(
+            qualificationError instanceof Error
+              ? qualificationError.message
+              : pick(language, '공식 접수처 확인에 실패했습니다.', 'The public destination check failed.'),
+          );
+        } finally {
+          setQualifying(false);
+        }
+        return;
+      }
+      await sleep(320);
+      setDestination(selected.email);
+      setStep('compose');
+      return;
+    }
     if (mode === 'internal' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identityInput)) {
-      setError('업무 이메일 형식을 확인해 주세요.');
+      setError(pick(language, '업무 이메일 형식을 확인해 주세요.', 'Check the work email format.'));
       return;
     }
     if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain)) {
-      setError('유효한 조직 도메인을 입력해 주세요.');
+      setError(pick(language, '유효한 조직 도메인을 입력해 주세요.', 'Enter a valid organization domain.'));
       return;
     }
 
@@ -391,10 +354,18 @@ export default function App() {
       } catch (qualificationError) {
         const message = qualificationError instanceof Error ? qualificationError.message : '';
         setError(
-          mode === 'whitehat' && /^Unable to fetch security\.txt \(\d{3}\)\.$/.test(message)
-            ? `해당 도메인에서 유효한 security.txt를 직접 가져오지 못했습니다 (${message.match(/\d{3}/)?.[0]}). 리디렉션 없이 공개된 도메인을 입력해 주세요.`
+          mode === 'whitehat' &&
+            whitehatChannel === 'security' &&
+            /^Unable to fetch security\.txt \(\d{3}\)\.$/.test(message)
+            ? pick(
+                language,
+                `해당 도메인에서 유효한 security.txt를 직접 가져오지 못했습니다 (${message.match(/\d{3}/)?.[0]}). 리디렉션 없이 공개된 도메인을 입력해 주세요.`,
+                `A valid security.txt could not be fetched directly from this domain (${message.match(/\d{3}/)?.[0]}). Enter a domain that publishes it without a redirect.`,
+              )
             : message ||
-                (mode === 'internal' ? 'OTP 자격 요청에 실패했습니다.' : 'security.txt 확인에 실패했습니다.'),
+                (mode === 'internal'
+                  ? pick(language, 'OTP 자격 요청에 실패했습니다.', 'The OTP eligibility request failed.')
+                  : pick(language, 'security.txt 확인에 실패했습니다.', 'The security.txt check failed.')),
         );
       } finally {
         setQualifying(false);
@@ -410,7 +381,7 @@ export default function App() {
   async function verifyOtpAndIssueCredential() {
     if (!internalEnrollment || !otpChallenge) return;
     if (!/^\d{6}$/.test(otpCode)) {
-      setError('6자리 OTP 코드를 입력해 주세요.');
+      setError(pick(language, '6자리 OTP 코드를 입력해 주세요.', 'Enter the six-digit OTP code.'));
       return;
     }
     setError('');
@@ -427,7 +398,11 @@ export default function App() {
       setError(
         qualificationError instanceof Error
           ? qualificationError.message
-          : 'OTP 확인 또는 온체인 credential 발급에 실패했습니다.',
+          : pick(
+              language,
+              'OTP 확인 또는 온체인 credential 발급에 실패했습니다.',
+              'OTP verification or on-chain credential issuance failed.',
+            ),
       );
     } finally {
       setQualifying(false);
@@ -451,41 +426,72 @@ export default function App() {
     setPreparingEvidence(true);
     try {
       if (evidenceFiles.length + selected.length > evidenceLimits.maxFiles) {
-        throw new Error(`파일은 최대 ${evidenceLimits.maxFiles}개까지 첨부할 수 있습니다.`);
+        throw new Error(
+          pick(
+            language,
+            `파일은 최대 ${evidenceLimits.maxFiles}개까지 첨부할 수 있습니다.`,
+            `You can attach up to ${evidenceLimits.maxFiles} files.`,
+          ),
+        );
       }
       if (
         evidenceFiles.reduce((sum, file) => sum + file.size, 0) +
           selected.reduce((sum, file) => sum + file.size, 0) >
         evidenceLimits.maxTotalBytes
       ) {
-        throw new Error('첨부파일 전체 크기는 10MB 이하여야 합니다.');
+        throw new Error(
+          pick(
+            language,
+            '첨부파일 전체 크기는 10MB 이하여야 합니다.',
+            'Attachments must total 10 MB or less.',
+          ),
+        );
       }
       const prepared = await Promise.all(selected.map(prepareEvidenceFile));
       const combined = [...evidenceFiles, ...prepared];
       validateEvidenceSelection(combined);
       setEvidenceFiles(combined);
     } catch (attachmentError) {
-      setError(attachmentError instanceof Error ? attachmentError.message : '첨부파일을 읽지 못했습니다.');
+      setError(
+        attachmentError instanceof Error
+          ? attachmentError.message
+          : pick(language, '첨부파일을 읽지 못했습니다.', 'The attachment could not be read.'),
+      );
     } finally {
       setPreparingEvidence(false);
     }
   }
 
   async function connectDeployment(): Promise<boolean> {
+    setError('');
     setLiveConnection('connecting');
     setLiveStatus(
-      'Lace 승인을 기다리는 중입니다… 첫 연결과 지갑 동기화에는 1~2분이 걸릴 수 있습니다. Authorize는 한 번만 눌러 주세요.',
+      pick(
+        language,
+        'Lace 승인을 기다리는 중입니다… 첫 연결과 지갑 동기화에는 1~2분이 걸릴 수 있습니다. Authorize는 한 번만 눌러 주세요.',
+        'Waiting for Lace approval… The first connection and wallet sync can take 1–2 minutes. Select Authorize only once.',
+      ),
     );
     try {
       const connection = await connectLiveContract();
       setLiveConnection('connected');
       setLiveStatus(
-        `계약 ${shortHash(connection.address, 10, 8)} · 온체인 접수 ${connection.acceptedCount.toString()}건`,
+        pick(
+          language,
+          `계약 ${shortHash(connection.address, 10, 8)} · 온체인 접수 ${connection.acceptedCount.toString()}건`,
+          `Contract ${shortHash(connection.address, 10, 8)} · ${connection.acceptedCount.toString()} on-chain reports`,
+        ),
       );
       return true;
     } catch (connectionError) {
       const message =
-        connectionError instanceof Error ? connectionError.message : 'Midnight 계약 연결에 실패했습니다.';
+        connectionError instanceof Error
+          ? connectionError.message
+          : pick(
+              language,
+              'Midnight 계약 연결에 실패했습니다.',
+              'Could not connect to the Midnight contract.',
+            );
       setLiveConnection('error');
       setLiveStatus(message);
       setError(message);
@@ -495,15 +501,33 @@ export default function App() {
 
   async function submitReport() {
     if (!draft.title.trim() || !draft.summary.trim() || !draft.details.trim()) {
-      setError('제목, 요약, 상세 내용을 모두 입력해 주세요.');
+      setError(
+        pick(
+          language,
+          '제목, 요약, 상세 내용을 모두 입력해 주세요.',
+          'Enter a title, summary, and detailed description.',
+        ),
+      );
       return;
     }
     if (!network.demoMode && !liveQualification) {
-      setError('실제 자격 발급을 먼저 완료해 주세요.');
+      setError(
+        pick(
+          language,
+          '실제 자격 발급을 먼저 완료해 주세요.',
+          'Complete live eligibility verification first.',
+        ),
+      );
       return;
     }
     if (preparingEvidence) {
-      setError('첨부파일 무결성 해시를 계산하는 중입니다. 잠시만 기다려 주세요.');
+      setError(
+        pick(
+          language,
+          '첨부파일 무결성 해시를 계산하는 중입니다. 잠시만 기다려 주세요.',
+          'Attachment integrity hashes are still being calculated. Please wait.',
+        ),
+      );
       return;
     }
 
@@ -551,7 +575,7 @@ export default function App() {
           deliveryError: liveReceipt.deliveryError,
           attachmentCount: evidenceFiles.length,
           attachmentBytes: evidenceFiles.reduce((sum, file) => sum + file.size, 0),
-          createdAt: new Intl.DateTimeFormat('ko-KR', {
+          createdAt: new Intl.DateTimeFormat(language === 'ko' ? 'ko-KR' : 'en-US', {
             dateStyle: 'medium',
             timeStyle: 'medium',
           }).format(new Date()),
@@ -561,7 +585,7 @@ export default function App() {
         const reportCommitment = await createLocalCommitment(canonicalReport(report), salt);
         await sleep(520);
         setProofPhase(1);
-        const destinationCommitment = await createLocalCommitment(domain);
+        const destinationCommitment = await createLocalCommitment(destination);
         await sleep(520);
         setProofPhase(2);
         const powNonce = await solvePow(reportCommitment);
@@ -583,7 +607,7 @@ export default function App() {
           source: 'demo',
           attachmentCount: evidenceFiles.length,
           attachmentBytes: evidenceFiles.reduce((sum, file) => sum + file.size, 0),
-          createdAt: new Intl.DateTimeFormat('ko-KR', {
+          createdAt: new Intl.DateTimeFormat(language === 'ko' ? 'ko-KR' : 'en-US', {
             dateStyle: 'medium',
             timeStyle: 'medium',
           }).format(new Date()),
@@ -592,22 +616,44 @@ export default function App() {
       setStep('receipt');
     } catch (submissionError) {
       if (submissionError instanceof ModerationRejectedError) {
-        const category = moderationCategoryLabel[submissionError.category] ?? '악성 메시지';
+        const category =
+          moderationCategoryLabels[language][submissionError.category] ??
+          pick(language, '악성 메시지', 'harmful content');
         setStep('compose');
         setProofPhase(-1);
-        setError('내용을 수정한 뒤 다시 제출해 주세요. 피해 사실을 인용했다면 상황을 명확히 적어 주세요.');
+        setError(
+          pick(
+            language,
+            '내용을 수정한 뒤 다시 제출해 주세요. 피해 사실을 인용했다면 상황을 명확히 적어 주세요.',
+            'Revise the report and submit it again. If you quoted harmful content as evidence, explain the context clearly.',
+          ),
+        );
         setModerationToast({
-          title: '제출되지 않았습니다',
-          message: `${category}로 감지되어 제보가 차단되었습니다.`,
+          title: pick(language, '제출되지 않았습니다', 'Report not submitted'),
+          message: pick(
+            language,
+            `${category}로 감지되어 제보가 차단되었습니다.`,
+            `The report was blocked because it was classified as ${category}.`,
+          ),
         });
         return;
       }
       if (isWalletConnectionExpired(submissionError)) {
         setLiveConnection('error');
-        setLiveStatus('Lace 연결이 종료되었습니다. 다시 연결한 뒤 제출해 주세요.');
+        setLiveStatus(
+          pick(
+            language,
+            'Lace 연결이 종료되었습니다. 다시 연결한 뒤 제출해 주세요.',
+            'The Lace session ended. Reconnect before submitting.',
+          ),
+        );
       }
       setStep('compose');
-      setError(submissionError instanceof Error ? submissionError.message : '리포트 제출에 실패했습니다.');
+      setError(
+        submissionError instanceof Error
+          ? submissionError.message
+          : pick(language, '리포트 제출에 실패했습니다.', 'The report could not be submitted.'),
+      );
     }
   }
 
@@ -653,7 +699,9 @@ export default function App() {
       });
     } catch (deliveryError) {
       const message =
-        deliveryError instanceof Error ? deliveryError.message : '리포트 전달 재시도에 실패했습니다.';
+        deliveryError instanceof Error
+          ? deliveryError.message
+          : pick(language, '리포트 전달 재시도에 실패했습니다.', 'The delivery retry failed.');
       setReceipt((current) => {
         if (!current) return current;
         const next = { ...current, delivery: 'failed' as const, deliveryError: message };
@@ -665,12 +713,12 @@ export default function App() {
     }
   }
 
-  const activeIndex = stepOrder.indexOf(step);
+  const activeIndex = reportSteps.indexOf(step);
 
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">
-        본문으로 바로가기
+        {pick(language, '본문으로 바로가기', 'Skip to main content')}
       </a>
       {moderationToast && (
         <div className="moderation-toast" role="alert" aria-live="assertive">
@@ -678,126 +726,69 @@ export default function App() {
           <div>
             <strong>{moderationToast.title}</strong>
             <p>{moderationToast.message}</p>
-            <small>명백한 악용만 자동 차단하며, 실제 피해·위법 사실에 대한 제보는 제출할 수 있습니다.</small>
+            <small>
+              {pick(
+                language,
+                '명백한 악용만 자동 차단하며, 실제 피해·위법 사실에 대한 제보는 제출할 수 있습니다.',
+                'Only clear abuse is blocked. Reports of real harm or misconduct can still be submitted.',
+              )}
+            </small>
           </div>
           <button
             type="button"
-            aria-label="알림 닫기"
-            title="알림 닫기"
+            aria-label={pick(language, '알림 닫기', 'Dismiss notification')}
+            title={pick(language, '알림 닫기', 'Dismiss notification')}
             onClick={() => setModerationToast(null)}
           >
             <X size={16} />
           </button>
         </div>
       )}
-      <header className="topbar">
-        <a
-          className="brand"
-          href="#main-content"
-          aria-label="GhostWhistle 홈"
-          onClick={(event) => {
-            event.preventDefault();
-            openHome();
-          }}
-        >
-          <BrandMark />
-          <span>GhostWhistle</span>
-        </a>
-        <nav>
-          {!showReport && <a href="#privacy">Privacy model</a>}
-          {!showReport && <a href="#midnight">Midnight</a>}
-          {showReport && (
-            <button className="nav-home-button" type="button" onClick={openHome}>
-              홈으로 돌아가기
-            </button>
-          )}
-        </nav>
-      </header>
+      {walletGateOpen && (
+        <WalletGate
+          language={language}
+          state={liveConnection}
+          status={liveStatus}
+          onClose={() => setWalletGateOpen(false)}
+          onConnect={() => void connectFromWalletGate()}
+        />
+      )}
+      <AppHeader
+        language={language}
+        open={languageMenuOpen}
+        showReport={showReport}
+        onToggle={() => setLanguageMenuOpen((current) => !current)}
+        onChange={changeLanguage}
+        onHome={openHome}
+        onReport={requestReportAccess}
+      />
 
       <main id="main-content" tabIndex={-1}>
         {!showReport ? (
-          <section className="hero home-hero">
-            <div className="hero-copy">
-              <div className="eyebrow">PRIVATE REPORTING</div>
-              <h1>
-                Speak up safely.
-                <br />
-                <em>Stay protected.</em>
-              </h1>
-              <p>
-                신원을 드러내지 않고, 믿을 수 있는 조직과 보안팀에
-                <br />
-                중요한 사실을 전달하세요.
-              </p>
-              <button className="hero-cta" type="button" onClick={openReport}>
-                제보 시작하기
-              </button>
-              <div className="hero-trust">
-                <span>
-                  <LockKeyhole size={15} /> 신원 보호
-                </span>
-                <span>
-                  <Fingerprint size={15} /> 내용 위조 방지
-                </span>
-                <span>
-                  <Mail size={15} /> 공식 접수처 전달
-                </span>
-              </div>
-            </div>
-            <div className="hero-art" aria-label="GhostWhistle 보호 전달 경로">
-              <div className="hero-art-topline">
-                <span>
-                  <i /> PROTECTED ROUTE
-                </span>
-                <span>LOCAL / PRIVATE</span>
-              </div>
-              <div className="hero-art-heading">
-                <div className="hero-art-seal">
-                  <ShieldCheck size={24} />
-                </div>
-                <div>
-                  <strong>진실은 전달하고</strong>
-                  <span>신원은 남기지 않습니다.</span>
-                </div>
-              </div>
-              <div className="hero-art-flow">
-                <div className="hero-art-line" aria-hidden="true" />
-                <div className="hero-art-node">
-                  <b>01</b>
-                  <strong>작성</strong>
-                  <span>브라우저 안에서 준비</span>
-                </div>
-                <div className="hero-art-node">
-                  <b>02</b>
-                  <strong>보호</strong>
-                  <span>신원과 내용을 분리</span>
-                </div>
-                <div className="hero-art-node active">
-                  <b>03</b>
-                  <strong>전달</strong>
-                  <span>공식 접수처로 도착</span>
-                </div>
-              </div>
-            </div>
-          </section>
+          <HomeHero language={language} onStart={requestReportAccess} />
         ) : (
           <section className="hero report-hero">
             <button className="back-home" type="button" onClick={openHome}>
-              <ChevronRight size={15} /> 홈으로
+              {pick(language, '홈으로', 'Home')}
             </button>
-            <h1>
-              안전하게
-              <br />
-              <em>제보하세요.</em>
-            </h1>
-            <p>신원 정보는 제보 내용과 분리되며, 작성한 내용만 확인된 공식 접수처로 전달됩니다.</p>
+            <h1>{pick(language, '안전하게 제보하세요.', 'Report safely.')}</h1>
+            <p>
+              {pick(
+                language,
+                '필요한 확인은 앞에서 처리합니다. 제보 내용과 신원은 서로 연결되지 않습니다.',
+                'Required checks happen first. Your report and identity are never linked.',
+              )}
+            </p>
           </section>
         )}
 
         {showReport && (
-          <section className="workspace-card" aria-label="GhostWhistle 제보 작성">
+          <section
+            className="workspace-card"
+            aria-label={pick(language, 'GhostWhistle 제보 작성', 'GhostWhistle report form')}
+          >
             <div className="workspace-top">
-              <StepRail step={step} />
+              <StepRail step={step} language={language} />
               <span className={`runtime-badge ${network.demoMode ? 'demo' : 'live'}`}>
                 <i /> {network.demoMode ? 'INTERACTIVE DEMO' : `${network.name.toUpperCase()} · LIVE`}
               </span>
@@ -805,64 +796,46 @@ export default function App() {
 
             <div className="workspace-grid">
               <div className="form-panel">
-                <div className="mode-switch" role="tablist" aria-label="제보 유형">
+                <div
+                  className="mode-switch"
+                  role="tablist"
+                  aria-label={pick(language, '제보 유형', 'Report type')}
+                >
                   <button
                     className={mode === 'internal' ? 'selected' : ''}
                     onClick={() => changeMode('internal')}
                     role="tab"
                   >
-                    사내 공익 제보
+                    <span>{pick(language, '사내 공익 제보', 'Internal report')}</span>
+                    <small>{pick(language, '소속 확인 필수', 'Affiliation required')}</small>
                   </button>
                   <button
                     className={mode === 'whitehat' ? 'selected' : ''}
                     onClick={() => changeMode('whitehat')}
                     role="tab"
                   >
-                    보안 취약점 제보
+                    <span>{pick(language, '보안·공익 제보', 'Security & public-interest')}</span>
+                    <small>{pick(language, '소속 확인 없음', 'No affiliation check')}</small>
                   </button>
                 </div>
 
                 {step === 'qualify' && (
                   <div className="stage enter-stage">
-                    {network.contractAddress && (
-                      <div className={`live-connection ${liveConnection}`}>
-                        <div>
-                          <span>
-                            <strong>
-                              <WalletMark state={liveConnection} />
-                              지갑 연결
-                            </strong>
-                            <small>
-                              {liveConnection === 'connected'
-                                ? '제보를 전송할 준비가 되었습니다.'
-                                : liveStatus || '제보 전송 전에 한 번만 연결합니다.'}
-                            </small>
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => void connectDeployment()}
-                          disabled={liveConnection === 'connecting' || liveConnection === 'connected'}
-                        >
-                          {liveConnection === 'connecting'
-                            ? '연결 중…'
-                            : liveConnection === 'connected'
-                              ? '연결됨'
-                              : liveConnection === 'error'
-                                ? '다시 연결'
-                                : '연결하기'}
-                        </button>
-                      </div>
-                    )}
                     {otpChallenge && internalEnrollment ? (
                       <div className="otp-stage">
-                        <span className="section-kicker">01 · 이메일 확인</span>
-                        <h2>업무 이메일을 확인해 주세요</h2>
+                        <span className="section-kicker">
+                          {pick(language, '01 · 이메일 확인', '01 · Email verification')}
+                        </span>
+                        <h2>{pick(language, '업무 이메일을 확인해 주세요', 'Check your work email')}</h2>
                         <p className="stage-description">
-                          {internalEnrollment.email}로 보낸 6자리 코드를 입력하면 소속 확인이 완료됩니다.
+                          {pick(
+                            language,
+                            `${internalEnrollment.email}로 보낸 6자리 코드를 입력하면 소속 확인이 완료됩니다.`,
+                            `Enter the six-digit code sent to ${internalEnrollment.email} to verify your affiliation.`,
+                          )}
                         </p>
                         <label className="field-label" htmlFor="otp-code">
-                          인증 코드
+                          {pick(language, '인증 코드', 'Verification code')}
                         </label>
                         <div className="input-wrap otp-input">
                           <KeyRound size={18} />
@@ -880,8 +853,12 @@ export default function App() {
                           />
                         </div>
                         <div className="microcopy" id="otp-expiry">
-                          <Clock3 size={13} /> 코드는{' '}
-                          {new Date(otpChallenge.expiresAt).toLocaleTimeString('ko-KR')}까지 유효합니다.
+                          <Clock3 size={13} />{' '}
+                          {pick(
+                            language,
+                            `코드는 ${new Date(otpChallenge.expiresAt).toLocaleTimeString('ko-KR')}까지 유효합니다.`,
+                            `Code valid until ${new Date(otpChallenge.expiresAt).toLocaleTimeString('en-US')}.`,
+                          )}
                         </div>
                         {error && (
                           <p className="form-error" role="alert">
@@ -893,7 +870,9 @@ export default function App() {
                           onClick={verifyOtpAndIssueCredential}
                           disabled={qualifying}
                         >
-                          {qualifying ? '확인 중…' : '계속하기'} <ArrowRight size={17} />
+                          {qualifying
+                            ? pick(language, '확인 중…', 'Verifying…')
+                            : pick(language, '계속하기', 'Continue')}
                         </button>
                         <button
                           className="secondary-button otp-reset"
@@ -905,59 +884,196 @@ export default function App() {
                             setError('');
                           }}
                         >
-                          이메일 다시 입력
+                          {pick(language, '이메일 다시 입력', 'Use a different email')}
                         </button>
                       </div>
                     ) : (
                       <>
-                        <span className="section-kicker">01 · 정보 확인</span>
-                        <h2>{mode === 'internal' ? '소속을 확인해요' : '공식 보안팀을 찾아요'}</h2>
+                        <span className="section-kicker">
+                          {pick(language, '01 · 정보 확인', '01 · Initial check')}
+                        </span>
+                        {mode === 'whitehat' && (
+                          <div
+                            className="destination-channel-switch"
+                            role="tablist"
+                            aria-label={pick(language, '접수 경로', 'Destination channel')}
+                          >
+                            <button
+                              type="button"
+                              className={whitehatChannel === 'security' ? 'selected' : ''}
+                              role="tab"
+                              aria-selected={whitehatChannel === 'security'}
+                              onClick={() => {
+                                setWhitehatChannel('security');
+                                setError('');
+                              }}
+                            >
+                              {pick(language, '보안 취약점', 'Security issue')}
+                            </button>
+                            <button
+                              type="button"
+                              className={whitehatChannel === 'public' ? 'selected' : ''}
+                              role="tab"
+                              aria-selected={whitehatChannel === 'public'}
+                              onClick={() => {
+                                setWhitehatChannel('public');
+                                setError('');
+                              }}
+                            >
+                              {pick(language, '공익 제보처', 'Public-interest channel')}
+                            </button>
+                          </div>
+                        )}
+                        <h2>
+                          {mode === 'internal'
+                            ? pick(language, '소속을 확인해요', 'Verify your affiliation')
+                            : whitehatChannel === 'public'
+                              ? pick(language, '공식 접수처를 선택해요', 'Choose an official destination')
+                              : pick(
+                                  language,
+                                  '소속 확인 없이 시작해요',
+                                  'Start without affiliation verification',
+                                )}
+                        </h2>
                         <p className="stage-description">
                           {mode === 'internal'
-                            ? '업무 이메일은 소속 확인에만 사용되며, 제보 내용과 연결되지 않습니다.'
-                            : '입력한 사이트가 공개한 공식 보안 접수처만 확인합니다.'}
+                            ? pick(
+                                language,
+                                '업무 이메일은 소속 확인에만 사용됩니다. 이름과 이메일은 감사실에 전달되지 않습니다.',
+                                'Your work email is used only to verify affiliation. Your name and email are not shared with the audit team.',
+                              )
+                            : whitehatChannel === 'public'
+                              ? pick(
+                                  language,
+                                  '회사 이메일 없이, 운영자가 확인한 방송사·감독기관·기자 접수처 중 하나를 선택합니다.',
+                                  'Choose a verified broadcaster, regulator, or journalist destination without sharing a company email.',
+                                )
+                              : pick(
+                                  language,
+                                  '회사 이메일 없이 기관이나 사이트가 공개한 공식 보안 접수처만 확인합니다.',
+                                  'No company email is needed. We verify only the official security contact published by the organization or website.',
+                                )}
                         </p>
 
-                        <label className="field-label" htmlFor="identity-input">
-                          {mode === 'internal' ? '업무 이메일' : '취약점을 발견한 도메인'}
-                        </label>
-                        <div className="input-wrap">
-                          {mode === 'internal' ? <Mail size={18} /> : <Network size={18} />}
-                          <input
-                            id="identity-input"
-                            name={mode === 'internal' ? 'work-email' : 'target-domain'}
-                            type={mode === 'internal' ? 'email' : 'text'}
-                            inputMode={mode === 'internal' ? 'email' : 'url'}
-                            spellCheck={false}
-                            aria-describedby="identity-help"
-                            value={identityInput}
-                            onChange={(event) => setIdentityInput(event.target.value)}
-                            placeholder={mode === 'internal' ? 'name@company.com' : 'example.com'}
-                            autoComplete="off"
-                          />
-                        </div>
-                        <div className="microcopy" id="identity-help">
-                          <KeyRound size={13} />{' '}
-                          {mode === 'whitehat'
-                            ? `예시: ${whitehatExampleDomain}`
-                            : network.demoMode
-                              ? '데모에서는 실제 이메일을 보내지 않습니다.'
-                              : '입력한 이메일은 소속 확인 뒤 보관하지 않습니다.'}
-                        </div>
+                        {mode === 'whitehat' && whitehatChannel === 'public' ? (
+                          <div className="public-destination-list" aria-describedby="public-destination-help">
+                            {publicDestinationsLoading ? (
+                              <div className="destination-directory-empty">
+                                {pick(
+                                  language,
+                                  '공식 접수처 목록을 불러오는 중…',
+                                  'Loading official destinations…',
+                                )}
+                              </div>
+                            ) : publicDestinations.length > 0 ? (
+                              publicDestinations.map((candidate) => (
+                                <button
+                                  type="button"
+                                  className={`public-destination-card ${
+                                    candidate.id === publicDestinationId ? 'selected' : ''
+                                  }`}
+                                  key={candidate.id}
+                                  aria-pressed={candidate.id === publicDestinationId}
+                                  onClick={() => {
+                                    setPublicDestinationId(candidate.id);
+                                    setError('');
+                                  }}
+                                >
+                                  <span className="destination-card-category">
+                                    {publicDestinationCategoryLabels[language][candidate.category]}
+                                  </span>
+                                  <strong>{candidate.organization}</strong>
+                                  <span>{candidate.label}</span>
+                                  <small>{candidate.email}</small>
+                                  <p>{candidate.description}</p>
+                                </button>
+                              ))
+                            ) : (
+                              <div className="destination-directory-empty">
+                                {pick(
+                                  language,
+                                  '현재 선택할 수 있는 공식 접수처가 없습니다.',
+                                  'No official destination is available to choose yet.',
+                                )}
+                              </div>
+                            )}
+                            <div className="microcopy" id="public-destination-help">
+                              <KeyRound size={13} />{' '}
+                              {pick(
+                                language,
+                                '임의의 이메일 주소는 입력할 수 없으며, 등록된 접수처만 온체인 목적지로 승인됩니다.',
+                                'Arbitrary email addresses are not accepted. Only registered destinations can be approved on-chain.',
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <label className="field-label" htmlFor="identity-input">
+                              {mode === 'internal'
+                                ? pick(language, '업무 이메일', 'Work email')
+                                : pick(language, '기관 또는 사이트', 'Organization or website')}
+                            </label>
+                            <div className="input-wrap">
+                              {mode === 'internal' ? <Mail size={18} /> : <Network size={18} />}
+                              <input
+                                id="identity-input"
+                                name={mode === 'internal' ? 'work-email' : 'target-domain'}
+                                type={mode === 'internal' ? 'email' : 'text'}
+                                inputMode={mode === 'internal' ? 'email' : 'url'}
+                                spellCheck={false}
+                                aria-describedby="identity-help"
+                                value={identityInput}
+                                onChange={(event) => setIdentityInput(event.target.value)}
+                                placeholder={mode === 'internal' ? 'name@company.com' : 'example.com'}
+                                autoComplete="off"
+                              />
+                            </div>
+                            <div className="microcopy" id="identity-help">
+                              <KeyRound size={13} />{' '}
+                              {mode === 'whitehat'
+                                ? pick(
+                                    language,
+                                    `예시: ${whitehatExampleDomain} · 소속 확인 없이 진행`,
+                                    `Example: ${whitehatExampleDomain} · no affiliation check`,
+                                  )
+                                : network.demoMode
+                                  ? pick(
+                                      language,
+                                      '데모에서는 실제 이메일을 보내지 않습니다.',
+                                      'No email is sent in demo mode.',
+                                    )
+                                  : pick(
+                                      language,
+                                      '입력한 이메일은 소속 확인 뒤 보관하지 않습니다.',
+                                      'Your email is not retained after verification.',
+                                    )}
+                            </div>
+                          </>
+                        )}
                         {error && (
                           <p className="form-error" role="alert">
                             {error}
                           </p>
                         )}
-                        <button className="primary-button" onClick={qualify} disabled={qualifying}>
+                        <button
+                          className="primary-button"
+                          onClick={qualify}
+                          disabled={
+                            qualifying ||
+                            (mode === 'whitehat' &&
+                              whitehatChannel === 'public' &&
+                              (publicDestinationsLoading || !publicDestinationId))
+                          }
+                        >
                           {qualifying
-                            ? '확인 중…'
+                            ? pick(language, '확인 중…', 'Checking…')
                             : mode === 'internal'
-                              ? '제보 시작하기'
-                              : '공식 접수처 확인'}{' '}
-                          <ArrowRight size={17} />
+                              ? pick(language, '제보 시작하기', 'Start report')
+                              : whitehatChannel === 'public'
+                                ? pick(language, '선택한 접수처 확인하기', 'Verify selected destination')
+                                : pick(language, '접수처 확인하기', 'Check destination')}
                         </button>
-                        <PrivacyBoundary mode={mode} />
+                        <PrivacyBoundary mode={mode} language={language} />
                       </>
                     )}
                   </div>
@@ -969,17 +1085,25 @@ export default function App() {
                       <CircleCheck size={18} />
                       <div>
                         <strong>
-                          {mode === 'internal' ? '소속 확인 완료' : '공식 보안 접수처 확인 완료'}
+                          {mode === 'internal'
+                            ? pick(language, '소속 확인 완료', 'Affiliation verified')
+                            : pick(language, '공식 접수처 확인 완료', 'Official destination verified')}
                         </strong>
-                        <span>공식 접수처 · {destination}</span>
+                        <span>
+                          {pick(language, '공식 접수처', 'Official destination')} · {destination}
+                        </span>
                       </div>
                     </div>
-                    <span className="section-kicker">02 · 제보 내용</span>
-                    <h2>무슨 일이 있었는지 알려주세요</h2>
+                    <span className="section-kicker">
+                      {pick(language, '02 · 제보 내용', '02 · Report details')}
+                    </span>
+                    <h2>{pick(language, '무슨 일이 있었는지 알려주세요', 'Tell us what happened')}</h2>
                     <div className="form-grid">
                       <div className="full-field">
                         <label className="field-label" htmlFor="department">
-                          {mode === 'internal' ? '발생 부서' : '영향받는 자산'}
+                          {mode === 'internal'
+                            ? pick(language, '발생 부서', 'Department')
+                            : pick(language, '관련 기관·서비스', 'Organization or service')}
                         </label>
                         <input
                           id="department"
@@ -991,7 +1115,7 @@ export default function App() {
                       </div>
                       <div className="full-field">
                         <label className="field-label" htmlFor="title">
-                          제목
+                          {pick(language, '제목', 'Title')}
                         </label>
                         <input
                           id="title"
@@ -1003,7 +1127,7 @@ export default function App() {
                       </div>
                       <div className="full-field">
                         <label className="field-label" htmlFor="summary">
-                          한 줄 요약
+                          {pick(language, '한 줄 요약', 'One-line summary')}
                         </label>
                         <input
                           id="summary"
@@ -1015,7 +1139,7 @@ export default function App() {
                       </div>
                       <div className="full-field">
                         <label className="field-label" htmlFor="details">
-                          상세 내용
+                          {pick(language, '상세 내용', 'Detailed description')}
                         </label>
                         <textarea
                           id="details"
@@ -1028,7 +1152,8 @@ export default function App() {
                       </div>
                       <div className="full-field evidence-field">
                         <label className="field-label" htmlFor="evidence-files">
-                          증거 파일 <span>선택 사항</span>
+                          {pick(language, '증거 파일', 'Evidence files')}{' '}
+                          <span>{pick(language, '선택 사항', 'Optional')}</span>
                         </label>
                         <label
                           className={`evidence-picker ${preparingEvidence ? 'busy' : ''}`}
@@ -1037,9 +1162,17 @@ export default function App() {
                           <Paperclip size={18} />
                           <span>
                             <strong>
-                              {preparingEvidence ? '파일 무결성 확인 중…' : '이미지 또는 문서 추가'}
+                              {preparingEvidence
+                                ? pick(language, '파일 무결성 확인 중…', 'Checking file integrity…')
+                                : pick(language, '이미지 또는 문서 추가', 'Add an image or document')}
                             </strong>
-                            <small>JPG, PNG, WEBP, GIF, PDF, TXT, CSV, JSON · 최대 5개 / 전체 10MB</small>
+                            <small>
+                              {pick(
+                                language,
+                                'JPG, PNG, WEBP, GIF, PDF, TXT, CSV, JSON · 최대 5개 / 전체 10MB',
+                                'JPG, PNG, WEBP, GIF, PDF, TXT, CSV, JSON · up to 5 files / 10 MB total',
+                              )}
+                            </small>
                           </span>
                           <input
                             id="evidence-files"
@@ -1051,7 +1184,10 @@ export default function App() {
                           />
                         </label>
                         {evidenceFiles.length > 0 && (
-                          <ul className="evidence-list" aria-label="선택한 증거 파일">
+                          <ul
+                            className="evidence-list"
+                            aria-label={pick(language, '선택한 증거 파일', 'Selected evidence files')}
+                          >
                             {evidenceFiles.map((file, index) => (
                               <li key={`${file.sha256}-${index}`}>
                                 <FileCheck2 size={16} />
@@ -1063,8 +1199,8 @@ export default function App() {
                                 </span>
                                 <button
                                   type="button"
-                                  aria-label={`${file.name} 삭제`}
-                                  title="첨부파일 삭제"
+                                  aria-label={pick(language, `${file.name} 삭제`, `Remove ${file.name}`)}
+                                  title={pick(language, '첨부파일 삭제', 'Remove attachment')}
                                   onClick={() =>
                                     setEvidenceFiles((current) =>
                                       current.filter((_, itemIndex) => itemIndex !== index),
@@ -1081,7 +1217,7 @@ export default function App() {
                     </div>
                     <div className="destination-lock">
                       <LockKeyhole size={16} />
-                      <span>공식 접수처</span>
+                      <span>{pick(language, '공식 접수처', 'Official destination')}</span>
                       <strong>{destination}</strong>
                     </div>
                     {error && (
@@ -1090,10 +1226,18 @@ export default function App() {
                       </p>
                     )}
                     <button className="primary-button" onClick={submitReport} disabled={preparingEvidence}>
-                      {preparingEvidence ? '파일 확인 중…' : '안전하게 제보하기'} <Send size={17} />
+                      {preparingEvidence
+                        ? pick(language, '파일 확인 중…', 'Checking files…')
+                        : pick(language, '안전하게 제보하기', 'Submit securely')}{' '}
+                      <Send size={17} />
                     </button>
                     <p className="wallet-note">
-                      <ShieldCheck size={13} /> 제출 수수료는 서비스가 부담합니다.
+                      <ShieldCheck size={13} />{' '}
+                      {pick(
+                        language,
+                        '제출 수수료는 서비스가 부담합니다.',
+                        'The service covers the submission fee.',
+                      )}
                     </p>
                   </div>
                 )}
@@ -1105,15 +1249,27 @@ export default function App() {
                       <span />
                       <span />
                     </div>
-                    <span className="section-kicker">03 · 안전한 전송</span>
-                    <h2>제보를 안전하게 전달하는 중</h2>
+                    <span className="section-kicker">
+                      {pick(language, '03 · 안전한 전송', '03 · Secure delivery')}
+                    </span>
+                    <h2>
+                      {pick(language, '제보를 안전하게 전달하는 중', 'Delivering your report securely')}
+                    </h2>
                     <p className="stage-description">
                       {network.demoMode
-                        ? '실제 데이터를 전송하지 않고 보호 절차를 브라우저에서 재현합니다.'
-                        : '작성한 내용과 신원은 공개되지 않고, 공식 접수처로 전달됩니다.'}
+                        ? pick(
+                            language,
+                            '실제 데이터를 전송하지 않고 보호 절차를 브라우저에서 재현합니다.',
+                            'The browser reproduces the privacy flow without sending real data.',
+                          )
+                        : pick(
+                            language,
+                            '신원을 공개하지 않은 채 제보 내용을 공식 접수처로 전달합니다.',
+                            'Your report is delivered to the official destination without disclosing your identity.',
+                          )}
                     </p>
                     <div className="proof-list">
-                      {proofPhases.map((phase, index) => (
+                      {proofPhases[language].map((phase, index) => (
                         <div
                           className={index < proofPhase ? 'done' : index === proofPhase ? 'running' : ''}
                           key={phase}
@@ -1129,7 +1285,11 @@ export default function App() {
                           </span>
                           <p>{phase}</p>
                           <small>
-                            {index < proofPhase ? '완료' : index === proofPhase ? '처리 중' : '대기'}
+                            {index < proofPhase
+                              ? pick(language, '완료', 'Done')
+                              : index === proofPhase
+                                ? pick(language, '처리 중', 'Processing')
+                                : pick(language, '대기', 'Waiting')}
                           </small>
                         </div>
                       ))}
@@ -1143,34 +1303,50 @@ export default function App() {
                       <Check size={30} />
                     </div>
                     <span className="section-kicker">
-                      {receipt.source === 'live' ? '04 · 접수 완료' : '04 · 데모 완료'}
+                      {receipt.source === 'live'
+                        ? pick(language, '04 · 접수 완료', '04 · Submission complete')
+                        : pick(language, '04 · 데모 완료', '04 · Demo complete')}
                     </span>
                     <h2>
-                      {receipt.source === 'live' ? '제보가 안전하게 접수됐습니다' : '접수증이 생성됐습니다'}
+                      {receipt.source === 'live'
+                        ? pick(language, '제보가 안전하게 접수됐습니다', 'Your report was submitted securely')
+                        : pick(language, '접수증이 생성됐습니다', 'Your demo receipt is ready')}
                     </h2>
                     <p className="stage-description">
                       {receipt.source === 'live'
                         ? receipt.delivery === 'failed'
-                          ? '온체인 접수는 완료됐지만 공식 접수처 전달은 실패했습니다. 아래에서 전달만 다시 시도할 수 있습니다.'
-                          : '공식 접수처로 전달됐습니다. 아래 접수증으로 전송 사실을 확인할 수 있습니다.'
-                        : '브라우저에서 보호 절차를 재현한 데모 접수증입니다. 실제 이메일이나 온체인 거래는 발생하지 않았습니다.'}
+                          ? pick(
+                              language,
+                              '온체인 접수는 완료됐지만 공식 접수처 전달은 실패했습니다. 아래에서 전달만 다시 시도할 수 있습니다.',
+                              'The on-chain submission succeeded, but delivery failed. You can retry delivery below without another transaction.',
+                            )
+                          : pick(
+                              language,
+                              '공식 접수처로 전달됐습니다. 아래 접수증으로 전송 사실을 확인할 수 있습니다.',
+                              'Delivered to the official destination. Use the receipt below to verify submission.',
+                            )
+                        : pick(
+                            language,
+                            '브라우저에서 보호 절차를 재현한 데모 접수증입니다. 실제 이메일이나 온체인 거래는 발생하지 않았습니다.',
+                            'This demo receipt reproduces the privacy flow in your browser. No email or on-chain transaction occurred.',
+                          )}
                     </p>
 
                     <div className="receipt-box">
                       <div>
                         <span>Ticket commitment</span>
                         <code>{shortHash(receipt.ticket, 14, 10)}</code>
-                        <CopyButton value={receipt.ticket} />
+                        <CopyButton value={receipt.ticket} language={language} />
                       </div>
                       <div>
                         <span>Report commitment</span>
                         <code>{shortHash(receipt.reportCommitment, 14, 10)}</code>
-                        <CopyButton value={receipt.reportCommitment} />
+                        <CopyButton value={receipt.reportCommitment} language={language} />
                       </div>
                       <div>
                         <span>Destination hash</span>
                         <code>{shortHash(receipt.destinationCommitment, 14, 10)}</code>
-                        <CopyButton value={receipt.destinationCommitment} />
+                        <CopyButton value={receipt.destinationCommitment} language={language} />
                       </div>
                       <div>
                         <span>Client PoW nonce</span>
@@ -1181,14 +1357,14 @@ export default function App() {
                         <div>
                           <span>Nullifier</span>
                           <code>{shortHash(receipt.nullifier, 14, 10)}</code>
-                          <CopyButton value={receipt.nullifier} />
+                          <CopyButton value={receipt.nullifier} language={language} />
                         </div>
                       )}
                       {receipt.transactionId && (
                         <div>
                           <span>Midnight transaction</span>
                           <code>{shortHash(receipt.transactionId, 14, 10)}</code>
-                          <CopyButton value={receipt.transactionId} />
+                          <CopyButton value={receipt.transactionId} language={language} />
                         </div>
                       )}
                     </div>
@@ -1196,24 +1372,36 @@ export default function App() {
                       <Clock3 size={14} /> {receipt.createdAt} ·{' '}
                       {receipt.source === 'live' ? network.name : 'local demo'}
                       {receipt.attachmentCount
-                        ? ` · 증거 파일 ${receipt.attachmentCount}개 (${formatEvidenceSize(receipt.attachmentBytes ?? 0)})`
+                        ? pick(
+                            language,
+                            ` · 증거 파일 ${receipt.attachmentCount}개 (${formatEvidenceSize(receipt.attachmentBytes ?? 0)})`,
+                            ` · ${receipt.attachmentCount} evidence file${receipt.attachmentCount === 1 ? '' : 's'} (${formatEvidenceSize(receipt.attachmentBytes ?? 0)})`,
+                          )
                         : ''}
                     </div>
                     {receipt.source === 'live' && receipt.delivery === 'failed' && liveDeliveryReceipt && (
                       <div className="delivery-recovery">
-                        <p>온체인 접수증은 안전합니다. 새 트랜잭션 없이 전달만 다시 시도할 수 있습니다.</p>
+                        <p>
+                          {pick(
+                            language,
+                            '온체인 접수증은 안전합니다. 새 트랜잭션 없이 전달만 다시 시도할 수 있습니다.',
+                            'Your on-chain receipt is safe. Delivery can be retried without a new transaction.',
+                          )}
+                        </p>
                         <button
                           type="button"
                           onClick={() => void retryDelivery()}
                           disabled={retryingDelivery}
                         >
                           <RefreshCw size={15} />{' '}
-                          {retryingDelivery ? '전달 재시도 중…' : '보고서 전달만 재시도'}
+                          {retryingDelivery
+                            ? pick(language, '전달 재시도 중…', 'Retrying delivery…')
+                            : pick(language, '보고서 전달만 재시도', 'Retry report delivery')}
                         </button>
                       </div>
                     )}
                     <button className="secondary-button" onClick={startAgain}>
-                      <RefreshCw size={16} /> 새 제보 시작
+                      <RefreshCw size={16} /> {pick(language, '새 제보 시작', 'Start a new report')}
                     </button>
                   </div>
                 )}
@@ -1225,94 +1413,13 @@ export default function App() {
                 destination={destination}
                 live={receipt?.source === 'live'}
                 demoMode={network.demoMode}
+                language={language}
               />
             </div>
           </section>
         )}
 
-        {!showReport && (
-          <section className="explanation" id="privacy">
-            <div className="section-intro">
-              <span className="section-kicker">DESIGNED FOR HONEST PRIVACY</span>
-              <h2>
-                “아무것도 수집하지 않는다”가 아니라,
-                <br />각 주체가 <em>꼭 필요한 것만</em> 보게 합니다.
-              </h2>
-            </div>
-            <div className="principle-grid">
-              <article>
-                <span>01</span>
-                <KeyRound size={23} />
-                <h3>Issuer sees eligibility</h3>
-                <p>
-                  OTP 발급자는 업무 이메일을 확인하지만 리포트 본문은 보지 않습니다. 사용자가 만든 credential
-                  commitment만 발급합니다.
-                </p>
-              </article>
-              <article>
-                <span>02</span>
-                <ShieldCheck size={23} />
-                <h3>Midnight sees proof</h3>
-                <p>
-                  Compact 회로는 자격 커밋의 소유와 도메인 일치만 검증합니다. 이메일 주소와 원문은 온체인에
-                  올라가지 않습니다.
-                </p>
-              </article>
-              <article>
-                <span>03</span>
-                <Inbox size={23} />
-                <h3>Auditor sees report</h3>
-                <p>
-                  감사팀은 평소 메일함에서 리포트와 검증 ticket을 받습니다. 개인 이메일이나 지갑 주소는
-                  전달되지 않습니다.
-                </p>
-              </article>
-            </div>
-          </section>
-        )}
-
-        {!showReport && (
-          <section className="midnight-section" id="midnight">
-            <div>
-              <span className="section-kicker">WHY MIDNIGHT</span>
-              <h2>
-                신원은 숨기고,
-                <br />
-                필요한 사실만 증명합니다.
-              </h2>
-            </div>
-            <div className="zk-proof-card" aria-label="Midnight 영지식 증명 구조">
-              <div className="zk-proof-topline">
-                <span>
-                  <i /> MIDNIGHT ZERO-KNOWLEDGE PROOF
-                </span>
-                <span>COMPACT</span>
-              </div>
-              <div className="zk-proof-boundary">
-                <div className="zk-proof-side private-inputs">
-                  <small>PRIVATE INPUTS</small>
-                  <strong>숨겨진 입력</strong>
-                  <p>업무 이메일 · 자격 비밀 · 제보 원문</p>
-                </div>
-                <div className="zk-proof-core">
-                  <span>
-                    <ShieldCheck size={22} />
-                  </span>
-                  <small>ZK PROOF</small>
-                  <strong>조건만 검증</strong>
-                </div>
-                <div className="zk-proof-side public-output">
-                  <small>PUBLIC OUTPUT</small>
-                  <strong>공개 증명</strong>
-                  <p>자격 충족 · 목적지 일치 · 1회 제출</p>
-                </div>
-              </div>
-              <div className="zk-proof-footer">
-                <EyeOff size={15} /> 원문과 신원은 블록체인에 기록되지 않습니다.
-              </div>
-            </div>
-          </section>
-        )}
+        {!showReport && <MidnightExplainer language={language} />}
       </main>
 
       <footer>
@@ -1320,16 +1427,13 @@ export default function App() {
           <BrandMark />
           <span>GhostWhistle</span>
         </div>
-        <p>Verified truth. Shielded identity.</p>
-        <span>Midnight Korea Hackathon 2026</span>
+        <p>{pick(language, '신원은 보호하고, 사실은 전달합니다.', 'Protect identity. Deliver the truth.')}</p>
+        <span>Midnight Korea Hackathon · 2026</span>
       </footer>
-
-      <div className="ambient ambient-one" />
-      <div className="ambient ambient-two" />
       {showReport && (
         <div
           className="progress-line"
-          style={{ width: `${((activeIndex + 1) / stepOrder.length) * 100}%` }}
+          style={{ width: `${((activeIndex + 1) / reportSteps.length) * 100}%` }}
         />
       )}
     </div>

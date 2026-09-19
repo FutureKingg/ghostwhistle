@@ -4,16 +4,18 @@
 
 **Reviewer demo:** [ghostwhistle.vercel.app](https://ghostwhistle.vercel.app) — keyless interactive demo; no real email or on-chain transaction is sent.
 
+Project introduction: [English](docs/PROJECT_INTRO_EN.md) · [한국어](docs/PROJECT_INTRO_KO.md)
+
 An eligible reporter can prove that they hold an organization credential, bind a report to an approved destination, and create a tamper-evident ticket without publishing their email address, credential secret, report body, or attachments on-chain.
 
-> Project status: the functional core, Compact contract, deterministic demo, live Midnight.js/Lace provider boundary, end-to-end OTP issuance flow, `security.txt` parser, moderation boundary, anti-replay logic, and email adapters are implemented. A real Preview/Preprod deployment is reported only after its address and transaction identifiers are captured; the UI never presents simulator output as a live proof.
+> Project status: the functional core, Compact contract, deterministic demo, live Midnight.js/Lace provider boundary, end-to-end OTP issuance flow, `security.txt` parser, operator-curated public destination directory, moderation boundary, anti-replay logic, and email adapters are implemented. A real Preview/Preprod deployment is reported only after its address and transaction identifiers are captured; the UI never presents simulator output as a live proof.
 
 ## Why it exists
 
 Anonymous messages are easy to dismiss because recipients cannot distinguish an eligible insider or responsible researcher from spam. Conventional identity verification fixes that trust problem by revealing the reporter. GhostWhistle proves a smaller claim:
 
 - internal mode: an issued credential opens to a secret whose hidden domain equals the destination domain;
-- white-hat mode: the exact destination Contact was approved from its RFC 9116 `security.txt` policy;
+- white-hat mode: the exact destination Contact was approved from its RFC 9116 `security.txt` policy or from an operator-verified public-interest directory;
 - both modes: the ticket binds a salted report commitment and a one-time nullifier.
 
 The report is still delivered off-chain because an audit or security team needs to read it. Midnight is used for eligibility, routing constraints, anti-replay, and an immutable receipt—not as document storage.
@@ -69,18 +71,19 @@ The domain layer does not import React, Resend, Gemini, Vercel, or Midnight JS. 
 
 ## Implemented behavior
 
-| Capability                 | Implementation                                               | Verification                |
-| -------------------------- | ------------------------------------------------------------ | --------------------------- |
-| Work-email challenge       | Browser commitment → expiring OTP → trusted issuer           | Integration + OTP tests     |
-| Credential privacy         | Client creates the secret; issuer receives only a commitment | Core integration tests      |
-| Internal destination lock  | `credentialDomainHash == destinationDomainHash` in Compact   | Compact source + CI compile |
-| White-hat destination lock | Exact same-domain `mailto:` Contact commitment from RFC 9116 | Parser/integration tests    |
-| Report integrity           | Salted commitment; plaintext is not ledger state             | Core integration tests      |
-| Replay defense             | One-time nullifier set in Compact and demo adapter           | Replay test                 |
-| Flood cost                 | Verifiable client Hashcash puzzle                            | Core integration tests      |
-| Threat filtering           | Replaceable port; conservative fallback and Gemini adapter   | Unit/adapter tests          |
-| Enterprise delivery        | HTML-escaped Resend relay with ticket header                 | Adapter tests               |
-| Evidence validation        | Size, digest, allowlist, and server-side file signatures     | API + browser tests         |
+| Capability                   | Implementation                                                                                                                    | Verification                |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| Work-email challenge         | Browser commitment → expiring OTP → trusted issuer                                                                                | Integration + OTP tests     |
+| Credential privacy           | Client creates the secret; issuer receives only a commitment                                                                      | Core integration tests      |
+| Internal destination lock    | `credentialDomainHash == destinationDomainHash` in Compact                                                                        | Compact source + CI compile |
+| White-hat destination lock   | Exact same-domain `mailto:` Contact commitment from RFC 9116                                                                      | Parser/integration tests    |
+| Public destination directory | Browser selects an operator-verified broadcaster, regulator, or journalist destination by id; the server approves the exact email | Core + issuer API tests     |
+| Report integrity             | Salted commitment; plaintext is not ledger state                                                                                  | Core integration tests      |
+| Replay defense               | One-time nullifier set in Compact and demo adapter                                                                                | Replay test                 |
+| Flood cost                   | Verifiable client Hashcash puzzle                                                                                                 | Core integration tests      |
+| Threat filtering             | Replaceable AI moderation port; the current production adapter is Gemini, with a conservative local fallback                      | Unit/adapter tests          |
+| Enterprise delivery          | HTML-escaped Resend relay with ticket header                                                                                      | Adapter tests               |
+| Evidence validation          | Size, digest, allowlist, and server-side file signatures                                                                          | API + browser tests         |
 
 Run every TypeScript check:
 
@@ -127,25 +130,51 @@ RESEND_REPORT_FROM=
 RESEND_OTP_FROM=
 GEMINI_API_KEY=
 GEMINI_MODEL=
+GHOSTWHISTLE_PUBLIC_DESTINATIONS_JSON=[]
 ```
 
 The demo does not require these keys. A deployment must fail closed when a selected production adapter is not configured.
+
+### AI moderation provider
+
+GhostWhistle keeps moderation behind a replaceable `ModerationPort`, so another AI provider can be added later without changing the domain or ledger rules. The provider currently implemented and tested is Google Gemini. When `GEMINI_API_KEY` is configured on the server, Gemini acts only as an abuse gate for obvious insults, spam, advertising, or direct active threats; it is not a truth judge or human reviewer. If the key is absent or Gemini is unavailable, the issuer falls back to the conservative local rules instead. The public keyless demo uses the local rules and does not call an external AI service.
 
 ### Local issuer API
 
 After deploying the local contract, keep the wallet terminal available and start the trusted issuer boundary in a second terminal:
 
 ```bash
-npm run midnight:issuer:local -- --contract 53b53054c3ee818f80d01f94d112b971ec46b8692a88086cb7bcf2427b097505
+npm run midnight:issuer:local -- --contract <local-contract-address>
 ```
 
-The command unlocks the existing encrypted admin vault, joins the contract with the CLI wallet, and serves OTP, `security.txt` whitehat qualification, report relay, and DUST sponsorship on `127.0.0.1:8787`. The browser submits a user-signed transaction without attaching its own DUST; the issuer process adds only sponsor-owned DUST, signs the fee section, and broadcasts it. Without Resend settings, OTP is printed in the private terminal and a report is ticket-verified locally without sending external email. With `RESEND_API_KEY`, `RESEND_OTP_FROM`, and `RESEND_REPORT_FROM`, both are delivered by email. The browser receives only the credential commitment and never receives issuer secrets. To exercise this live path in the web app, set `VITE_DEMO_MODE=false` in `apps/web/.env.local`; leave it `true` for the keyless presentation demo. The current live path still uses Lace for the reporter's transaction signature; the sponsor removes the DUST requirement, not the wallet signature requirement.
+Replace `<local-contract-address>` with the contract address printed by the local deployment command. The address is environment-specific and is intentionally not committed to the repository.
+
+The command unlocks the existing encrypted admin vault, joins the contract with the CLI wallet, and serves OTP, `security.txt` qualification, the operator-curated public destination directory, report relay, and DUST sponsorship on `127.0.0.1:8787`. The browser submits a user-signed transaction without attaching its own DUST; the issuer process adds only sponsor-owned DUST, signs the fee section, and broadcasts it. Without Resend settings, OTP is printed in the private terminal and a report is ticket-verified locally without sending external email. With `RESEND_API_KEY`, `RESEND_OTP_FROM`, and `RESEND_REPORT_FROM`, both are delivered by email. The browser receives only the credential commitment and never receives issuer secrets. To exercise this live path in the web app, set `VITE_DEMO_MODE=false` in `apps/web/.env.local`; leave it `true` for the keyless presentation demo. The current live path still uses Lace for the reporter's transaction signature; the sponsor removes the DUST requirement, not the wallet signature requirement.
+
+### Public-interest destination directory
+
+Set the server-only `GHOSTWHISTLE_PUBLIC_DESTINATIONS_JSON` value to a JSON array of destinations that the operator has verified out of band. The browser receives the display metadata and an id, but never chooses an arbitrary recipient address. The issuer looks up the id, approves the exact email commitment with the destination-oracle key, and the same destination is checked again by the relay before delivery.
+
+Example shape (use real, independently verified addresses only in a real deployment):
+
+```json
+[
+  {
+    "id": "example-newsroom",
+    "category": "broadcaster",
+    "organization": "Example Newsroom",
+    "label": "Tips desk",
+    "email": "tips@example.org",
+    "description": "Official public-interest tip channel."
+  }
+]
+```
 
 Successful report delivery is claimed atomically by ticket and persisted below the ignored `apps/midnight-cli/.local/delivery-receipts/` directory. Resend also receives the ticket as an idempotency key. This prevents browser retries and issuer restarts from sending the same accepted report twice on a single-instance deployment. Use an atomic shared store for a multi-instance service.
 
 Short-lived OTP challenges are likewise kept below the ignored `apps/midnight-cli/.local/otp-challenges/` directory. Only the OTP hash is stored, so restarting the single issuer process does not invalidate an in-progress challenge or reset its attempt counter. Request limits persist below `.local/rate-limits/`; email and IP keys are SHA-256 hashed before storage. Production multi-instance hosting must replace these single-process file stores with an encrypted shared TTL store.
 
-Credential revocation and manually reviewed `security.txt` destination approval are operator-only wallet operations; neither is exposed as a public HTTP route:
+Credential revocation and direct `security.txt` destination approval remain operator-only wallet operations. The browser-facing qualification routes can only approve a parsed same-domain `security.txt` contact or an entry already present in the operator-curated directory:
 
 ```bash
 npm run midnight:wallet -- --network preview --contract <address> --revoke-credential <commitment>
@@ -164,7 +193,7 @@ The Compact contract maintains issued credential commitments, approved destinati
 
 ## Privacy statement
 
-GhostWhistle does **not** claim network-level anonymity by itself. A browser host, OTP provider, relay provider, corporate network, or recipient mail server may observe metadata. OTP demonstrates control of a mailbox at issuance time; it is not universal proof of employment. A ticket proves contract acceptance of commitments; it does not prove that an email was read or investigated.
+GhostWhistle does **not** claim network-level anonymity by itself. It separates the report from the verified mailbox/credential and avoids analytics, third-party fonts, and raw IP persistence, but a browser host, issuer server, OTP provider, relay provider, corporate network, or recipient mail server may still observe metadata. IP, browser fingerprint, device compromise, and internal-network monitoring are outside the Midnight contract. High-risk deployments need a separately designed Tor/onion or equivalent privacy infrastructure; users should not treat a normal browser session as Tor. OTP demonstrates control of a mailbox at issuance time; it is not universal proof of employment. A ticket proves contract acceptance of commitments; it does not prove that an email was read or investigated.
 
 See [Threat model](docs/THREAT_MODEL.md) for the complete boundary.
 

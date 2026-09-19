@@ -8,14 +8,17 @@ import {
   LocalModerationAdapter,
   OtpService,
   SlidingWindowRateLimiter,
+  createPublicDestinationQualification,
   createWhitehatQualification,
   issueCredentialAfterOtp,
+  normalizePublicDestinations,
   normalizeReportAttachments,
   verifyPow,
   type CredentialRegistryPort,
   type DestinationRegistryPort,
   type OtpDeliveryPort,
   type OtpStore,
+  type PublicDestination,
   type RelayMessage,
   type RelayAttachment,
   type RelayPort,
@@ -36,6 +39,7 @@ export type SponsorOptions = {
 export type WhitehatOptions = {
   resolver: SecurityTxtResolverPort;
   registry: DestinationRegistryPort;
+  publicDestinations?: readonly PublicDestination[];
 };
 
 export type ReportRelayOptions = {
@@ -91,6 +95,10 @@ export async function startIssuerServer(options: IssuerServerOptions): Promise<S
   const moderationRequests = createRateLimiter('moderation', 30, 10 * 60 * 1000);
   const moderation = options.moderation ?? new LocalModerationAdapter();
   const deliveryStore = options.deliveryStore ?? new InMemoryReportDeliveryStore();
+  const publicDestinations = normalizePublicDestinations(options.whitehat?.publicDestinations ?? []);
+  const publicDestinationsById = new Map(
+    publicDestinations.map((destination) => [destination.id, destination]),
+  );
 
   const server = createServer(async (request, response) => {
     const requestOrigin = request.headers.origin;
@@ -110,6 +118,10 @@ export async function startIssuerServer(options: IssuerServerOptions): Promise<S
       }
       if (request.method === 'GET' && request.url === '/health') {
         sendJson(response, 200, { status: 'ready' });
+        return;
+      }
+      if (request.method === 'GET' && request.url === '/api/public/destinations') {
+        sendJson(response, 200, { destinations: publicDestinations });
         return;
       }
       if (request.method === 'POST' && request.url === '/api/internal/request') {
@@ -153,6 +165,24 @@ export async function startIssuerServer(options: IssuerServerOptions): Promise<S
         const domain = requiredString(body.domain, 'domain');
         const securityTxt = await options.whitehat.resolver.resolve(domain);
         const qualification = createWhitehatQualification(domain, securityTxt);
+        await options.whitehat.registry.approveSecurityDestination(qualification.destinationEmail);
+        sendJson(response, 200, qualification);
+        return;
+      }
+      if (request.method === 'POST' && request.url === '/api/public/qualify') {
+        if (!options.whitehat) {
+          sendJson(response, 503, { error: 'Public destination qualification is not configured.' });
+          return;
+        }
+        const remoteAddress = request.socket.remoteAddress ?? 'unknown';
+        await whitehatRequests.consume(`ip:${remoteAddress}`);
+        const body = await readJson(request);
+        const destinationId = requiredString(body.destinationId, 'destinationId').toLowerCase();
+        const destination = publicDestinationsById.get(destinationId);
+        if (!destination) {
+          throw new GhostWhistleError('The selected public destination is not configured.', 'INVALID_INPUT');
+        }
+        const qualification = createPublicDestinationQualification(destination);
         await options.whitehat.registry.approveSecurityDestination(qualification.destinationEmail);
         sendJson(response, 200, qualification);
         return;

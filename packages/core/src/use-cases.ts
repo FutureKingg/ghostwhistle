@@ -1,6 +1,7 @@
 import { destinationCommitment, randomSalt, randomSecret, reportCommitment } from './commitments.js';
 import { LocalModerationAdapter } from './moderation.js';
 import { solvePow, verifyPow } from './pow.js';
+import { normalizePublicDestination, type PublicDestination } from './public-destinations.js';
 import type { OtpService, PublicOtpChallenge } from './otp.js';
 import type {
   CredentialCommitmentPort,
@@ -90,7 +91,30 @@ export function createWhitehatQualification(
 ): WhitehatQualification {
   const domain = normalizeDomain(domainInput);
   const destinationEmail = chooseSecurityContact(securityTxt, domain);
-  return { mode: 'whitehat', domain, destinationEmail, securityTxtUrl: securityTxt.url };
+  return {
+    mode: 'whitehat',
+    channel: 'security-txt',
+    domain,
+    destinationEmail,
+    securityTxtUrl: securityTxt.url,
+  };
+}
+
+/** Builds a white-hat qualification for an operator-verified public-interest directory entry. */
+export function createPublicDestinationQualification(
+  destinationInput: PublicDestination,
+): WhitehatQualification {
+  const destination = normalizePublicDestination(destinationInput);
+  const { domain } = normalizeEmail(destination.email);
+  return {
+    mode: 'whitehat',
+    channel: 'public-directory',
+    destinationId: destination.id,
+    destinationCategory: destination.category,
+    destinationLabel: destination.label,
+    domain,
+    destinationEmail: destination.email,
+  };
 }
 
 /** Trusted oracle step. A production implementation re-resolves the policy before calling this. */

@@ -3,6 +3,7 @@ import type {
   CredentialIssuance,
   InternalEnrollment,
   ModerationDecision,
+  PublicDestination,
   PublicOtpChallenge,
   Receipt,
   RelayAttachment,
@@ -25,6 +26,15 @@ export async function verifyInternalOtp(challengeId: string, code: string): Prom
 
 export async function qualifyWhitehat(domain: string): Promise<WhitehatQualification> {
   return post('/api/whitehat/qualify', { domain });
+}
+
+export async function listPublicDestinations(): Promise<PublicDestination[]> {
+  const response = await get<{ destinations: PublicDestination[] }>('/api/public/destinations');
+  return response.destinations;
+}
+
+export async function qualifyPublicDestination(destinationId: string): Promise<WhitehatQualification> {
+  return post('/api/public/qualify', { destinationId });
 }
 
 export async function moderateReport(
@@ -62,6 +72,18 @@ async function post<T>(path: string, body: unknown): Promise<T> {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
+  } catch {
+    throw new Error('로컬 issuer API에 연결할 수 없습니다. issuer-server를 실행해 주세요.');
+  }
+  const payload = (await response.json().catch(() => ({}))) as { error?: string } & T;
+  if (!response.ok) throw new Error(payload.error || `Issuer API returned HTTP ${response.status}.`);
+  return payload;
+}
+
+async function get<T>(path: string): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, { method: 'GET' });
   } catch {
     throw new Error('로컬 issuer API에 연결할 수 없습니다. issuer-server를 실행해 주세요.');
   }

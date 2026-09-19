@@ -27,7 +27,12 @@ import {
   ResendOtpDelivery,
   SecureSecurityTxtResolver,
 } from '@ghostwhistle/adapters';
-import { normalizeEmail, type RelayMessage } from '@ghostwhistle/core';
+import {
+  normalizeEmail,
+  normalizePublicDestinations,
+  type PublicDestination,
+  type RelayMessage,
+} from '@ghostwhistle/core';
 import { MidnightCredentialIssuerAdapter, MidnightDestinationOracleAdapter } from '@ghostwhistle/midnight';
 import { ADMIN_VAULT_FILE, getNetworkConfig, type MidnightNetworkConfig } from './config.js';
 import { loadOrCreateSeed, loadOrCreateVault } from './vault.js';
@@ -82,6 +87,21 @@ const argumentValue = (name: string): string | undefined => {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : undefined;
 };
+
+function loadPublicDestinations(): PublicDestination[] {
+  const raw = process.env.GHOSTWHISTLE_PUBLIC_DESTINATIONS_JSON?.trim();
+  if (!raw) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('GHOSTWHISTLE_PUBLIC_DESTINATIONS_JSON must be valid JSON.');
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error('GHOSTWHISTLE_PUBLIC_DESTINATIONS_JSON must be a JSON array.');
+  }
+  return normalizePublicDestinations(parsed);
+}
 
 const errorMessage = (error: unknown): string => {
   const messages: string[] = [];
@@ -587,6 +607,7 @@ async function main() {
               delivery: 'verified-local' as const,
               relay: new LocalVerifiedReportRelay(ticketVerifier),
             };
+      const publicDestinations = loadPublicDestinations();
       const geminiApiKey = process.env.GEMINI_API_KEY;
       const moderation = geminiApiKey
         ? new FailSafeModerationAdapter(
@@ -616,6 +637,7 @@ async function main() {
             client,
             Buffer.from(adminSecrets.oracleSecret, 'hex'),
           ),
+          publicDestinations,
         },
         reportRelay,
         deliveryStore: new FileReportDeliveryStore(),
@@ -628,6 +650,9 @@ async function main() {
       console.log(`\n  Issuer API ready: http://127.0.0.1:${port}`);
       console.log('  DUST sponsor API ready: POST /api/relay/submit');
       console.log('  Whitehat qualification API ready: POST /api/whitehat/qualify');
+      console.log(
+        `  Public destination directory: ${publicDestinations.length} configured · GET /api/public/destinations`,
+      );
       console.log(
         geminiApiKey
           ? '  Automatic abuse filter: Gemini + local fallback'
